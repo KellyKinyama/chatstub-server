@@ -68,10 +68,9 @@ class SmRegistry {
 
   void park(String smid, XmppWsSession session) {
     // Evict oldest for this user if over cap.
-    final userSmids = _held.entries
-        .where((e) => e.value.userId == session.userId)
-        .toList()
-      ..sort((a, b) => a.value.parkedAt.compareTo(b.value.parkedAt));
+    final userSmids =
+        _held.entries.where((e) => e.value.userId == session.userId).toList()
+          ..sort((a, b) => a.value.parkedAt.compareTo(b.value.parkedAt));
     while (userSmids.length >= maxPerUser) {
       final victim = userSmids.removeAt(0);
       _held.remove(victim.key);
@@ -368,7 +367,8 @@ class XmppWsSession implements XmppSession {
         el.getAttribute('resume') == 'true' || el.getAttribute('resume') == '1';
     _smid = _newSmId();
     final resumeAttr = _smResumable ? ' resume="true"' : '';
-    final rawSend = '<enabled xmlns="${Ns.sm3}" id="${_esc(_smid)}"'
+    final rawSend =
+        '<enabled xmlns="${Ns.sm3}" id="${_esc(_smid)}"'
         '$resumeAttr max="120"/>';
     if (_channelActive) {
       try {
@@ -697,11 +697,7 @@ class XmppWsSession implements XmppSession {
     // SIP-domain callee — hand the Jingle payload to the bridge.
     final gw = sipGateway;
     if (gw != null && to.domain == gw.sipDomain) {
-      unawaited(gw.onJingle(
-        callerJid: _jid,
-        calleeJid: to,
-        jingle: jingle,
-      ));
+      unawaited(gw.onJingle(callerJid: _jid, calleeJid: to, jingle: jingle));
       return;
     }
 
@@ -1009,20 +1005,19 @@ class XmppWsSession implements XmppSession {
         .where((e) => e.name.namespaceUri == Ns.chatStates)
         .firstOrNull;
     final hasReceipt = el.children.whereType<XmlElement>().any(
-          (e) => e.name.namespaceUri == Ns.receipts,
-        );
+      (e) => e.name.namespaceUri == Ns.receipts,
+    );
     final hasMarker = el.children.whereType<XmlElement>().any(
-          (e) => e.name.namespaceUri == Ns.chatMarkers,
-        );
+      (e) => e.name.namespaceUri == Ns.chatMarkers,
+    );
     final hasReactions = el.children.whereType<XmlElement>().any(
-          (e) => e.name.namespaceUri == Ns.reactions,
-        );
+      (e) => e.name.namespaceUri == Ns.reactions,
+    );
     final retractEl = el.children.whereType<XmlElement>().firstWhere(
-          (e) =>
-              e.name.namespaceUri == Ns.messageRetract &&
-              e.localName == 'retract',
-          orElse: () => XmlElement(XmlName('none')),
-        );
+      (e) =>
+          e.name.namespaceUri == Ns.messageRetract && e.localName == 'retract',
+      orElse: () => XmlElement(XmlName('none')),
+    );
     final hasRetract = retractEl.name.local != 'none';
 
     // Group chat (bubble). `to` is <bubbleId>@muc.<domain>.
@@ -1053,7 +1048,8 @@ class XmppWsSession implements XmppSession {
     }
     if (body == null) return;
 
-    final stanzaId = el.getAttribute('id') ??
+    final stanzaId =
+        el.getAttribute('id') ??
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     final saved = messages.insert(
       from: _jid,
@@ -1066,12 +1062,9 @@ class XmppWsSession implements XmppSession {
     // SIP-domain recipient — bridge to SIP MESSAGE instead of XMPP fan-out.
     final gw = sipGateway;
     if (gw != null && to.domain == gw.sipDomain) {
-      unawaited(gw.sendText(
-        from: _jid,
-        to: to,
-        body: body,
-        stanzaId: saved.stanzaId,
-      ));
+      unawaited(
+        gw.sendText(from: _jid, to: to, body: body, stanzaId: saved.stanzaId),
+      );
       for (final s in router.sessionsOf(_userId)) {
         if (identical(s, this)) continue;
         if (s is XmppWsSession && s._carbonsEnabled) {
@@ -1176,11 +1169,12 @@ class XmppWsSession implements XmppSession {
     // XEP-0444 reactions on a MUC message have no <body> — persist the
     // snapshot so MAM replay for later-joining members surfaces them.
     final hasReactions = el.children.whereType<XmlElement>().any(
-          (e) => e.name.namespaceUri == Ns.reactions,
-        );
+      (e) => e.name.namespaceUri == Ns.reactions,
+    );
     if (hasReactions) _persistReactions(el);
 
-    final stanzaId = el.getAttribute('id') ??
+    final stanzaId =
+        el.getAttribute('id') ??
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     if (body != null) {
       bubbles.insertMessage(
@@ -1219,6 +1213,19 @@ class XmppWsSession implements XmppSession {
       }
     }
 
+    // RFC 6121 §3 presence subscription. subscribe/subscribed/unsubscribe/
+    // unsubscribed are routed (bare-JID addressed) to the target peer;
+    // probe is answered with the target's current presence.
+    if (toAttr != null &&
+        (typeAttr == 'subscribe' ||
+            typeAttr == 'subscribed' ||
+            typeAttr == 'unsubscribe' ||
+            typeAttr == 'unsubscribed' ||
+            typeAttr == 'probe')) {
+      _handleSubscription(typeAttr!, Jid.parse(toAttr));
+      return;
+    }
+
     if (typeAttr == 'unavailable') {
       presence.set(_userId, 'offline');
       _fanOutPresenceAvailability(unavailable: true);
@@ -1232,6 +1239,36 @@ class XmppWsSession implements XmppSession {
     // Initial <presence/> from client — deliver each roster contact's known
     // presence back so the RN SDK can populate presence badges immediately.
     _sendRosterPresencesTo(this);
+  }
+
+  /// RFC 6121 §3 presence-subscription routing. subscribe/subscribed/
+  /// unsubscribe/unsubscribed are stamped with our bare JID and fanned
+  /// out to the target user's sessions. probe is answered directly with
+  /// the target's last known presence.
+  void _handleSubscription(String type, Jid target) {
+    if (type == 'probe') {
+      final rec = presence.findOrDefault(target.local);
+      final unavail = rec.show == 'offline';
+      final buf = StringBuffer(
+        '<presence from="${_esc('${target.local}@$domain')}" '
+        'to="${_esc(_jid.toString())}"',
+      );
+      if (unavail) buf.write(' type="unavailable"');
+      buf.write('>');
+      if (!unavail) {
+        buf.write('<show>${_esc(rec.show)}</show>');
+        if (rec.status != null) {
+          buf.write('<status>${_esc(rec.status!)}</status>');
+        }
+      }
+      buf.write('</presence>');
+      send(buf.toString());
+      return;
+    }
+    final stanza =
+        '<presence xmlns="${Ns.client}" from="${_esc(_jid.bare.toString())}" '
+        'to="${_esc(target.bare.toString())}" type="${_esc(type)}"/>';
+    router.fanOut(target.local, stanza);
   }
 
   void _handleMucPresence(XmlElement el, Jid to, String? type) {

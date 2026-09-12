@@ -263,6 +263,58 @@ void main() {
     );
     await alice.close();
   });
+
+  test('presence subscribe/subscribed is routed to the peer', () async {
+    final alice = await connect(
+      email: 'alice@rainbow-stub.local',
+      token: aliceToken,
+      resource: 'phone',
+    );
+    final bob = await connect(
+      email: 'bob@rainbow-stub.local',
+      token: bobToken,
+      resource: 'web',
+    );
+
+    final bobGetsSubscribe = bob.awaitLocal('presence');
+    alice.send('<presence to="$bobId@$_domain" type="subscribe"/>');
+    final sub = await bobGetsSubscribe.timeout(const Duration(seconds: 3));
+    expect(sub.getAttribute('type'), 'subscribe');
+    expect(sub.getAttribute('from'), '$aliceId@$_domain');
+
+    final aliceGetsApproved = alice.awaitLocal('presence');
+    bob.send('<presence to="$aliceId@$_domain" type="subscribed"/>');
+    final approved = await aliceGetsApproved.timeout(const Duration(seconds: 3));
+    expect(approved.getAttribute('type'), 'subscribed');
+    expect(approved.getAttribute('from'), '$bobId@$_domain');
+
+    await alice.close();
+    await bob.close();
+  });
+
+  test('presence probe returns the target current presence', () async {
+    final bob = await connect(
+      email: 'bob@rainbow-stub.local',
+      token: bobToken,
+      resource: 'web',
+    );
+    bob.send('<presence><show>away</show><status>brb</status></presence>');
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    final alice = await connect(
+      email: 'alice@rainbow-stub.local',
+      token: aliceToken,
+      resource: 'phone',
+    );
+    final probed = alice.awaitLocal('presence');
+    alice.send('<presence to="$bobId@$_domain" type="probe"/>');
+    final pres = await probed.timeout(const Duration(seconds: 3));
+    expect(pres.getAttribute('from'), '$bobId@$_domain');
+    expect(pres.getElement('show')?.innerText, 'away');
+
+    await alice.close();
+    await bob.close();
+  });
 }
 
 class _Xmpp {
