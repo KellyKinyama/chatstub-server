@@ -46,6 +46,7 @@ class Ns {
   static const rsm = 'http://jabber.org/protocol/rsm';
   static const jingle = 'urn:xmpp:jingle:1';
   static const mucCall = 'urn:rainbow:muc-call:1';
+  static const lastActivity = 'jabber:iq:last';
 }
 
 /// Server-wide registry of resumable Stream Management sessions.
@@ -620,6 +621,13 @@ class XmppWsSession implements XmppSession {
     final mamEl = el.getElement('query', namespace: Ns.mam2);
     if (mamEl != null && type == 'set') {
       _handleMamQuery(id, mamEl);
+      return;
+    }
+    // XEP-0012 Last Activity — the server answers on behalf of the
+    // target user from the presence record's timestamp.
+    final lastEl = el.getElement('query', namespace: Ns.lastActivity);
+    if (lastEl != null && type == 'get') {
+      _replyLastActivity(id, el.getAttribute('to'));
       return;
     }
     // XEP-0166 Jingle signaling — routed opaquely to the peer.
@@ -1245,6 +1253,24 @@ class XmppWsSession implements XmppSession {
   /// unsubscribe/unsubscribed are stamped with our bare JID and fanned
   /// out to the target user's sessions. probe is answered directly with
   /// the target's last known presence.
+  /// XEP-0012 Last Activity reply. `seconds` is 0 when the target is
+  /// currently online, otherwise the seconds elapsed since their
+  /// presence record last changed (i.e. when they went offline).
+  void _replyLastActivity(String iqId, String? toAttr) {
+    final targetLocal = toAttr != null ? Jid.parse(toAttr).local : _userId;
+    final rec = presence.findOrDefault(targetLocal);
+    final online = rec.show != 'offline';
+    final elapsed = DateTime.now().toUtc().difference(rec.updatedAt).inSeconds;
+    final seconds = online ? 0 : (elapsed < 0 ? 0 : elapsed);
+    final fromAttr = toAttr != null ? ' from="${_esc(toAttr)}"' : '';
+    send(
+      '<iq type="result" id="${_esc(iqId)}"$fromAttr '
+      'to="${_esc(_jid.toString())}">'
+      '<query xmlns="${Ns.lastActivity}" seconds="$seconds"/>'
+      '</iq>',
+    );
+  }
+
   void _handleSubscription(String type, Jid target) {
     if (type == 'probe') {
       final rec = presence.findOrDefault(target.local);

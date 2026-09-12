@@ -284,7 +284,9 @@ void main() {
 
     final aliceGetsApproved = alice.awaitLocal('presence');
     bob.send('<presence to="$aliceId@$_domain" type="subscribed"/>');
-    final approved = await aliceGetsApproved.timeout(const Duration(seconds: 3));
+    final approved = await aliceGetsApproved.timeout(
+      const Duration(seconds: 3),
+    );
     expect(approved.getAttribute('type'), 'subscribed');
     expect(approved.getAttribute('from'), '$bobId@$_domain');
 
@@ -314,6 +316,80 @@ void main() {
 
     await alice.close();
     await bob.close();
+  });
+
+  test('XEP-0012 last activity returns 0 for an online peer', () async {
+    final bob = await connect(
+      email: 'bob@rainbow-stub.local',
+      token: bobToken,
+      resource: 'web',
+    );
+    bob.send('<presence/>');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    final alice = await connect(
+      email: 'alice@rainbow-stub.local',
+      token: aliceToken,
+      resource: 'phone',
+    );
+    final done = Completer<XmlElement>();
+    late StreamSubscription sub;
+    sub = alice.stream.listen((e) {
+      if (e.localName == 'iq' && e.getAttribute('id') == 'last1') {
+        done.complete(e);
+      }
+    });
+    alice.send(
+      '<iq type="get" id="last1" to="$bobId@$_domain">'
+      '<query xmlns="jabber:iq:last"/></iq>',
+    );
+    final resp = await done.future.timeout(const Duration(seconds: 3));
+    await sub.cancel();
+    final q = resp.getElement('query', namespace: 'jabber:iq:last');
+    expect(q, isNotNull);
+    expect(q!.getAttribute('seconds'), '0');
+
+    await alice.close();
+    await bob.close();
+  });
+
+  test('XEP-0012 last activity grows after the peer goes offline', () async {
+    final bob = await connect(
+      email: 'bob@rainbow-stub.local',
+      token: bobToken,
+      resource: 'web',
+    );
+    bob.send('<presence/>');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await bob.close();
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+    final alice = await connect(
+      email: 'alice@rainbow-stub.local',
+      token: aliceToken,
+      resource: 'phone',
+    );
+    final done = Completer<XmlElement>();
+    late StreamSubscription sub;
+    sub = alice.stream.listen((e) {
+      if (e.localName == 'iq' && e.getAttribute('id') == 'last2') {
+        done.complete(e);
+      }
+    });
+    alice.send(
+      '<iq type="get" id="last2" to="$bobId@$_domain">'
+      '<query xmlns="jabber:iq:last"/></iq>',
+    );
+    final resp = await done.future.timeout(const Duration(seconds: 3));
+    await sub.cancel();
+    final secs = int.parse(
+      resp.getElement('query', namespace: 'jabber:iq:last')!.getAttribute(
+        'seconds',
+      )!,
+    );
+    expect(secs, greaterThanOrEqualTo(1));
+
+    await alice.close();
   });
 }
 
