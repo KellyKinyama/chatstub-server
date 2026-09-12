@@ -383,9 +383,9 @@ void main() {
     final resp = await done.future.timeout(const Duration(seconds: 3));
     await sub.cancel();
     final secs = int.parse(
-      resp.getElement('query', namespace: 'jabber:iq:last')!.getAttribute(
-        'seconds',
-      )!,
+      resp
+          .getElement('query', namespace: 'jabber:iq:last')!
+          .getAttribute('seconds')!,
     );
     expect(secs, greaterThanOrEqualTo(1));
 

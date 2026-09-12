@@ -35,6 +35,17 @@ dependencies:
   # XMPP-over-WS server (RFC 7395) tailored to the Rainbow SDK's
   # expectations rather than depending on xmppx_server.
 
+  # SIP stack for the Jingle↔SIP bridge (M1+). Path deps into the
+  # dart_sip workspace at c:\www\cpp\dart_sip.
+  sip_core:        { path: ../../cpp/dart_sip/packages/sip_core }
+  sip_transport:   { path: ../../cpp/dart_sip/packages/sip_transport }
+  sip_transaction: { path: ../../cpp/dart_sip/packages/sip_transaction }
+  sip_dialog:      { path: ../../cpp/dart_sip/packages/sip_dialog }
+  sip_uac:         { path: ../../cpp/dart_sip/packages/sip_uac }
+  sip_uas:         { path: ../../cpp/dart_sip/packages/sip_uas }
+  sip_dns:         { path: ../../cpp/dart_sip/packages/sip_dns }
+  sip_media:       { path: ../../cpp/dart_sip/packages/sip_media }
+
 dev_dependencies:
   lints: ^5.0.0
   test: ^1.25.0

@@ -28,7 +28,7 @@ asterisk:
   sipDomain: rainbow-stub
 
 tls:
-  enabled: true
+  enabled: false
   autoGenerate: true             # openssl-generate self-signed on first boot if missing
   hstsMaxAge: 15552000           # 180 days
   hstsIncludeSubdomains: true
