@@ -363,6 +363,55 @@ void main() {
     },
   );
 
+  test('bubble MAM replay preserves message thread + subject', () async {
+    final bubble = app.bubbles.create(ownerId: aliceId, name: 'Topic Room');
+    final aliceJid = Jid.parse('$aliceId@$_domain');
+    app.bubbles.insertMessage(
+      bubbleId: bubble.id,
+      stanzaId: 't1',
+      from: aliceJid,
+      body: 'first post',
+      thread: 'topic-abc',
+      subject: 'Launch plan',
+    );
+
+    final alice = await connect(
+      email: 'alice@rainbow-stub.local',
+      token: aliceToken,
+      resource: 'phone',
+    );
+    String? thread;
+    String? subject;
+    final done = Completer<void>();
+    late StreamSubscription sub;
+    sub = alice.stream.listen((e) {
+      if (e.localName == 'message') {
+        final inner = e
+            .getElement('result', namespace: 'urn:xmpp:mam:2')
+            ?.getElement('forwarded', namespace: 'urn:xmpp:forward:0')
+            ?.getElement('message', namespace: 'jabber:client');
+        if (inner != null) {
+          thread ??= inner.getElement('thread')?.innerText;
+          subject ??= inner.getElement('subject')?.innerText;
+        }
+      } else if (e.localName == 'iq' && e.getAttribute('id') == 'mam-t1') {
+        done.complete();
+      }
+    });
+    alice.send(
+      '<iq type="set" id="mam-t1">'
+      '<query xmlns="urn:xmpp:mam:2">'
+      '<x xmlns="jabber:x:data" type="submit">'
+      '<field var="with"><value>${bubble.id}@muc.$_domain</value></field>'
+      '</x></query></iq>',
+    );
+    await done.future.timeout(const Duration(seconds: 3));
+    await sub.cancel();
+    expect(thread, 'topic-abc');
+    expect(subject, 'Launch plan');
+    await alice.close();
+  });
+
   test('XEP-0313 RSM: <after> anchor returns next page', () async {
     final aliceJid = Jid.parse('$aliceId@$_domain');
     final bobJid = Jid.parse('$bobId@$_domain');

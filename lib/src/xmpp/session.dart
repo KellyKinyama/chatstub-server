@@ -905,10 +905,17 @@ class XmppWsSession implements XmppSession {
 
   String _wrapBubbleForMam(String queryId, BubbleMessage m) {
     final roomJid = '${m.bubbleId}@${Ns.mucPrefix}$domain';
+    final threadXml = m.thread != null
+        ? '<thread>${_esc(m.thread!)}</thread>'
+        : '';
+    final subjectXml = m.subject != null
+        ? '<subject>${_esc(m.subject!)}</subject>'
+        : '';
     final inner =
         '<message xmlns="${Ns.client}" from="${_esc('$roomJid/${m.from.local}')}" '
         'to="${_esc(roomJid)}" type="groupchat" id="${_esc(m.stanzaId)}">'
         '<body>${_esc(m.body)}</body>'
+        '$threadXml$subjectXml'
         '</message>';
     return '<message to="${_esc(_jid.toString())}">'
         '<result xmlns="${Ns.mam2}" queryid="${_esc(queryId)}" id="${_esc(m.id)}">'
@@ -1185,11 +1192,15 @@ class XmppWsSession implements XmppSession {
         el.getAttribute('id') ??
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     if (body != null) {
+      final thread = el.getElement('thread')?.innerText.trim();
+      final subject = el.getElement('subject')?.innerText.trim();
       bubbles.insertMessage(
         bubbleId: bubbleId,
         stanzaId: stanzaId,
         from: _jid,
         body: body,
+        thread: (thread != null && thread.isNotEmpty) ? thread : null,
+        subject: (subject != null && subject.isNotEmpty) ? subject : null,
       );
     }
     final forwarded = _rewriteFrom(el, id: stanzaId);

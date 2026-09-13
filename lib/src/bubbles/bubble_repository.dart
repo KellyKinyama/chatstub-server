@@ -50,6 +50,8 @@ class BubbleMessage {
     required this.from,
     required this.body,
     required this.sentAt,
+    this.thread,
+    this.subject,
   });
 
   final String id;
@@ -58,6 +60,12 @@ class BubbleMessage {
   final Jid from;
   final String body;
   final DateTime sentAt;
+
+  /// XEP-0201 thread id — the topic this message belongs to.
+  final String? thread;
+
+  /// Topic title, carried on the first message that opens a topic.
+  final String? subject;
 }
 
 class BubbleRepository {
@@ -264,14 +272,16 @@ class BubbleRepository {
     required String stanzaId,
     required Jid from,
     required String body,
+    String? thread,
+    String? subject,
   }) {
     final id = _ids.next();
     final now = DateTime.now().toUtc();
     _db.db.execute(
       '''
       INSERT INTO bubble_messages
-        (id, bubble_id, stanza_id, from_jid, body, sent_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+        (id, bubble_id, stanza_id, from_jid, body, thread, subject, sent_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       [
         id,
@@ -279,6 +289,8 @@ class BubbleRepository {
         stanzaId,
         from.bare.toString(),
         body,
+        thread,
+        subject,
         now.toIso8601String(),
       ],
     );
@@ -289,6 +301,8 @@ class BubbleRepository {
       from: from,
       body: body,
       sentAt: now,
+      thread: thread,
+      subject: subject,
     );
   }
 
@@ -390,6 +404,8 @@ class BubbleRepository {
     from: Jid.parse(r['from_jid'] as String),
     body: r['body'] as String,
     sentAt: DateTime.parse(r['sent_at'] as String),
+    thread: r['thread'] as String?,
+    subject: r['subject'] as String?,
   );
 
   Map<String, dynamic> bubbleToRainbowJson(

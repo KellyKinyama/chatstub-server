@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS bubble_messages (
   stanza_id    TEXT NOT NULL,
   from_jid     TEXT NOT NULL,
   body         TEXT NOT NULL,
+  thread       TEXT,
+  subject      TEXT,
   sent_at      TEXT NOT NULL,
   FOREIGN KEY (bubble_id) REFERENCES bubbles(id) ON DELETE CASCADE
 );
