@@ -150,6 +150,80 @@ Router authRouter({
     return jsonOk({'status': 'password updated'});
   });
 
+  // ---- register: create an UNVERIFIED account + issue an email code.
+  // Login is allowed while unverified; the app shows a "verify" banner.
+  r.post('/api/rainbow/enduser/v1.0/users/register', (Request req) async {
+    auth.validateAppAuth(req.headers['x-rainbow-app-auth']);
+    final body = await readJsonBody(req);
+    final email = (body['email'] ?? body['loginEmail']) as String?;
+    final password = body['password'] as String?;
+    if (email == null ||
+        email.isEmpty ||
+        password == null ||
+        password.isEmpty) {
+      throw RainbowError.badRequest('email and password are required');
+    }
+    if (users.findByEmail(email) != null) {
+      throw RainbowError.conflict('Email already registered');
+    }
+    final user = users.create(
+      loginEmail: email,
+      password: password,
+      firstName: body['firstName'] as String?,
+      lastName: body['lastName'] as String?,
+      emailVerified: false,
+    );
+    final token = _issueOneTimeToken(db, purpose: 'verify-email', email: email);
+    // Dev: the code is logged here instead of emailed.
+    _log.info('register user=${user.id} email=$email verify-code=$token');
+    return jsonOk({
+      'status': 'verification email sent',
+      'data': user.toRainbowJson(),
+      'devToken': token,
+    }, status: 201);
+  });
+
+  // ---- verify-email: consume the code and flip the account to verified.
+  r.post('/api/rainbow/enduser/v1.0/users/verify-email', (Request req) async {
+    auth.validateAppAuth(req.headers['x-rainbow-app-auth']);
+    final body = await readJsonBody(req);
+    final token = body['token'] as String?;
+    final ot = _findOneTimeToken(db, token, 'verify-email');
+    if (ot == null) throw RainbowError.badRequest('Invalid or expired code');
+    final email = ot['email'] as String;
+    final claimed = (body['email'] ?? body['loginEmail']) as String?;
+    if (claimed != null && claimed.toLowerCase() != email.toLowerCase()) {
+      throw RainbowError.badRequest('Code does not match email');
+    }
+    final u = users.findByEmail(email);
+    if (u == null) throw RainbowError.notFound('User missing');
+    final verified = users.markEmailVerified(u.id);
+    _consumeOneTimeToken(db, token!);
+    _log.info('verify-email ok user=${u.id} email=$email');
+    return jsonOk({'data': verified.toRainbowJson()});
+  });
+
+  // ---- resend-verification: issue a fresh code for an unverified account.
+  r.post('/api/rainbow/enduser/v1.0/users/resend-verification', (
+    Request req,
+  ) async {
+    auth.validateAppAuth(req.headers['x-rainbow-app-auth']);
+    final body = await readJsonBody(req);
+    final email = (body['email'] ?? body['loginEmail']) as String?;
+    if (email == null || email.isEmpty) {
+      throw RainbowError.badRequest('email is required');
+    }
+    final u = users.findByEmail(email);
+    // Don't leak account existence or verified-state.
+    if (u == null || u.emailVerified) {
+      _log.info('resend-verification noop email=$email');
+      return jsonOk({'status': 'ok'});
+    }
+    final token = _issueOneTimeToken(db, purpose: 'verify-email', email: email);
+    _log.info('resend-verification code=$token email=$email');
+    return jsonOk({'status': 'email sent', 'devToken': token});
+  });
+
   return r;
 }
 

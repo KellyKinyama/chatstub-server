@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
   language       TEXT DEFAULT 'en',
   is_active      INTEGER NOT NULL DEFAULT 1,
   is_initialized INTEGER NOT NULL DEFAULT 1,
+  email_verified INTEGER NOT NULL DEFAULT 1,
+  verified_at    TEXT,
   created_at     TEXT NOT NULL,            -- ISO-8601
   updated_at     TEXT NOT NULL
 );

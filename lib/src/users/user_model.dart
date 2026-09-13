@@ -15,6 +15,7 @@ class User {
     this.language = 'en',
     this.isActive = true,
     this.isInitialized = true,
+    this.emailVerified = true,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -30,6 +31,7 @@ class User {
   final String language;
   final bool isActive;
   final bool isInitialized;
+  final bool emailVerified;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -56,6 +58,7 @@ class User {
     'language': language,
     'isActive': isActive,
     'isInitialized': isInitialized,
+    'emailVerified': emailVerified,
     'creationDate': createdAt.toUtc().toIso8601String(),
     'lastUpdateDate': updatedAt.toUtc().toIso8601String(),
     // Fields the SDK reads defensively — return empty defaults.

@@ -39,6 +39,7 @@ class UserRepository {
     language: (r['language'] as String?) ?? 'en',
     isActive: (r['is_active'] as int) == 1,
     isInitialized: (r['is_initialized'] as int) == 1,
+    emailVerified: (r['email_verified'] as int? ?? 1) == 1,
     createdAt: DateTime.parse(r['created_at'] as String),
     updatedAt: DateTime.parse(r['updated_at'] as String),
   );
@@ -72,6 +73,7 @@ class UserRepository {
     required String password,
     String? firstName,
     String? lastName,
+    bool emailVerified = true,
   }) {
     final now = DateTime.now().toUtc();
     final salt = _newSalt();
@@ -80,8 +82,9 @@ class UserRepository {
       '''
       INSERT INTO users
         (id, login_email, password_hash, password_salt,
-         first_name, last_name, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         first_name, last_name, email_verified, verified_at,
+         created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       [
         id,
@@ -90,9 +93,22 @@ class UserRepository {
         salt,
         firstName,
         lastName,
+        emailVerified ? 1 : 0,
+        emailVerified ? now.toIso8601String() : null,
         now.toIso8601String(),
         now.toIso8601String(),
       ],
+    );
+    return findById(id)!;
+  }
+
+  /// Marks the account's email as verified (idempotent).
+  User markEmailVerified(String id) {
+    final now = DateTime.now().toUtc();
+    _db.db.execute(
+      'UPDATE users SET email_verified = 1, verified_at = ?, updated_at = ? '
+      'WHERE id = ?',
+      [now.toIso8601String(), now.toIso8601String(), id],
     );
     return findById(id)!;
   }
