@@ -1,0 +1,18 @@
+/var/log/asterisk/full
+/var/log/asterisk/messages
+/var/log/asterisk/queue_log
+/var/log/asterisk/security
+{
+    daily
+    missingok
+    notifempty
+    rotate 7
+    compress
+    delaycompress
+    maxsize 100M
+    create 0640 root root
+    sharedscripts
+    postrotate
+        /usr/sbin/asterisk -rx 'logger reload' > /dev/null 2>&1 || true
+    endscript
+}

@@ -1,9 +1,8 @@
-# rainbow-stub
+# chatstub-server
 
-Wire-compatible stub of the Alcatel-Lucent **Rainbow** CPaaS backend for
-local development of `react-native-rainbow-module` apps, the sibling
-Flutter consumer, and any other client that speaks Rainbow's REST +
-XMPP-over-WebSocket contract.
+A self-contained CPaaS-style messaging + calling backend **stub** for
+local development of the sibling Flutter consumer (`chatstub_consumer`)
+and any other client that speaks its REST + XMPP-over-WebSocket contract.
 
 - **REST:** `shelf` router on `:8443` (TLS by default, self-signed
   auto-generated) — auth, users, roster, presence, avatars, bubbles
@@ -26,10 +25,10 @@ XMPP-over-WebSocket contract.
 ## Quickstart
 
 ```powershell
-cd c:\www\dart\rainbow-stub
+cd c:\www\dart\chatstub-server
 dart pub get
 dart run tool/gen_cert.dart          # self-signed TLS (one-time)
-dart run tool/seed.dart              # seed alice/bob @rainbow-stub.local / password
+dart run tool/seed.dart              # seed alice/bob / password
 dart run bin/server.dart             # https://0.0.0.0:8443
 ```
 
@@ -44,7 +43,7 @@ dart run bin/server.dart --config config/rainbow-stub-smoke.yaml
 
 Use this for `flutter run -d <device> --dart-define=STUB_SCHEME=http`
 smoke runs — see the consumer's
-[docs/live-smoke-test.md](../../flutter/rainbow_stub_consumer/docs/live-smoke-test.md).
+[docs/live-smoke-test.md](../../flutter/chatstub_consumer/docs/live-smoke-test.md).
 
 ### Docker
 
@@ -66,7 +65,7 @@ or `ios/rainbow-config.json`):
 }
 ```
 
-Flutter consumer: [`c:\www\flutter\rainbow_stub_consumer`](../../flutter/rainbow_stub_consumer).
+Flutter consumer: [`c:\www\flutter\chatstub_consumer`](../../flutter/chatstub_consumer).
 Sample device-friendly invocation:
 
 ```powershell
@@ -137,7 +136,7 @@ Snapshot:
 - [x] Push-token upsert / delete / list + "would-push" INFO for offline
       recipients
 - [x] MUC group-call marker (`urn:rainbow:muc-call:1`) fan-out
-- [x] Flutter consumer (`c:\www\flutter\rainbow_stub_consumer`) live
+- [x] Flutter consumer (`c:\www\flutter\chatstub_consumer`) live
       smoke — chat, calls, group calls
 - [x] HTTP-only smoke config for real-device runs
 - [ ] Phase 5-SIP — Asterisk ARI bridge for P2P + ConfBridge *(deferred)*
