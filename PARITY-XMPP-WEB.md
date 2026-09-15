@@ -29,7 +29,7 @@ uses in its Vue components, vs. what the stub answers today.
 | Chat states | XEP-0085 | ✅ | — |
 | Reactions | XEP-0444 | ✅ | — |
 | **Registered login** | SASL PLAIN | ✅ | — |
-| **Guest / anonymous join** | SASL ANONYMOUS (RFC 4505) | ⬜ | **A1** |
+| **Guest / anonymous join** | SASL ANONYMOUS (RFC 4505) | ✅ | **A1** |
 | **vCard / avatar edit** | XEP-0054 `vcard-temp` | ⬜ | **A2** |
 | **File sharing** | XEP-0363 `http:upload:0` | 🟡 REST only | **A3** |
 | OOB url in message | XEP-0066 `jabber:x:oob` | 🟡 forwarded | **A3** |
@@ -46,7 +46,14 @@ uses in its Vue components, vs. what the stub answers today.
 
 ## Phase A — unblock the visibly-broken client features
 
-### A1 · SASL ANONYMOUS + guest/anon host (M) — ⬜
+### A1 · SASL ANONYMOUS + guest/anon host (M) — ✅
+
+- **Landed** on `feat/xmpp-web-parity` (`ee18084`): `<mechanisms>` now
+  advertises `ANONYMOUS` when `anonymous.enabled`, guests bind to
+  `guest-<hex>@<anonymousHost|domain>/<resource>`, presence writes are
+  skipped for guests (no user row → no FK), and PLAIN is unchanged.
+  Config: `anonymous.enabled` / `anonymous.host` in both YAML files.
+  Tests: `test/xmpp_anonymous_test.dart` (4 cases, green).
 
 - **What:** Advertise `ANONYMOUS` alongside `PLAIN` in `<mechanisms>`;
   on an `<auth mechanism="ANONYMOUS">` mint an ephemeral bare JID on
@@ -209,7 +216,7 @@ uses in its Vue components, vs. what the stub answers today.
 
 ## Suggested order
 
-1. **A1** (guest access) — self-contained, unblocks a whole client mode.
+1. **A1** (guest access) — ✅ done.
 2. **A2** (vCard) — unblocks Profile + avatars, no external deps.
 3. **A3** (HTTP upload) — highest-value visible feature; reuses storage.
 4. **B1** (bookmarks) — small, makes the rooms list persist.
