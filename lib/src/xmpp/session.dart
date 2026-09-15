@@ -56,6 +56,8 @@ class Ns {
   static const jingle = 'urn:xmpp:jingle:1';
   static const mucCall = 'urn:rainbow:muc-call:1';
   static const lastActivity = 'jabber:iq:last';
+  static const uniqueId = 'urn:xmpp:sid:0';
+  static const hints = 'urn:xmpp:hints';
   static const vcard = 'vcard-temp';
   static const httpUpload = 'urn:xmpp:http:upload:0';
   static const dataForm = 'jabber:x:data';
@@ -701,7 +703,10 @@ class XmppWsSession implements XmppSession {
     // XEP-0425 message moderation (moderator retracts a MUC message).
     final applyToEl = el.getElement('apply-to', namespace: Ns.fasten);
     if (applyToEl != null && type == 'set') {
-      final moderateEl = applyToEl.getElement('moderate', namespace: Ns.moderate0);
+      final moderateEl = applyToEl.getElement(
+        'moderate',
+        namespace: Ns.moderate0,
+      );
       if (moderateEl != null) {
         _handleModeration(id, el.getAttribute('to'), applyToEl, moderateEl);
         return;
@@ -834,6 +839,7 @@ class XmppWsSession implements XmppSession {
       Ns.rsm,
       Ns.jingle,
       Ns.vcard,
+      Ns.uniqueId,
       Ns.moderate0,
       if (upload.maxFileSize > 0) Ns.httpUpload,
     ];
@@ -1173,6 +1179,8 @@ class XmppWsSession implements XmppSession {
         '<message xmlns="${Ns.client}" from="${_esc(m.from.toString())}" '
         'to="${_esc(m.to.toString())}" type="chat" id="${_esc(m.stanzaId)}">'
         '<body>${_esc(m.body)}</body>'
+        '<stanza-id xmlns="${Ns.uniqueId}" id="${_esc(m.stanzaId)}" '
+        'by="${_esc(_jid.bare.toString())}"/>'
         '</message>';
     return '<message to="${_esc(_jid.toString())}">'
         '<result xmlns="${Ns.mam2}" queryid="${_esc(queryId)}" id="${_esc(m.id)}">'
@@ -1207,6 +1215,8 @@ class XmppWsSession implements XmppSession {
           '<message xmlns="${Ns.client}" from="${_esc('$roomJid/${m.from.local}')}" '
           'to="${_esc(roomJid)}" type="groupchat" id="${_esc(m.stanzaId)}">'
           '<body>${_esc(m.body)}</body>'
+          '<stanza-id xmlns="${Ns.uniqueId}" id="${_esc(m.stanzaId)}" '
+          'by="${_esc(roomJid)}"/>'
           '$threadXml$subjectXml'
           '</message>';
     }
@@ -1356,22 +1366,26 @@ class XmppWsSession implements XmppSession {
     }
     if (body == null) return;
 
+    final noStore = _hasNoStore(el);
     final stanzaId =
         el.getAttribute('id') ??
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-    final saved = messages.insert(
-      from: _jid,
-      to: to,
-      stanzaId: stanzaId,
-      body: body,
+    final archiveId = noStore
+        ? stanzaId
+        : messages
+              .insert(from: _jid, to: to, stanzaId: stanzaId, body: body)
+              .stanzaId;
+    final forwarded = _rewriteFromStamped(
+      el,
+      id: archiveId,
+      by: to.bare.toString(),
     );
-    final forwarded = _rewriteFrom(el, id: saved.stanzaId);
 
     // SIP-domain recipient — bridge to SIP MESSAGE instead of XMPP fan-out.
     final gw = sipGateway;
     if (gw != null && to.domain == gw.sipDomain) {
       unawaited(
-        gw.sendText(from: _jid, to: to, body: body, stanzaId: saved.stanzaId),
+        gw.sendText(from: _jid, to: to, body: body, stanzaId: archiveId),
       );
       for (final s in router.sessionsOf(_userId)) {
         if (identical(s, this)) continue;
@@ -1575,7 +1589,7 @@ class XmppWsSession implements XmppSession {
     final stanzaId =
         el.getAttribute('id') ??
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-    if (body != null) {
+    if (body != null && !_hasNoStore(el)) {
       final thread = el.getElement('thread')?.innerText.trim();
       final subject = el.getElement('subject')?.innerText.trim();
       bubbles.insertMessage(
@@ -1587,7 +1601,11 @@ class XmppWsSession implements XmppSession {
         subject: (subject != null && subject.isNotEmpty) ? subject : null,
       );
     }
-    final forwarded = _rewriteFrom(el, id: stanzaId);
+    final forwarded = _rewriteFromStamped(
+      el,
+      id: stanzaId,
+      by: to.toString(),
+    );
     for (final m in bubbles.membersOf(bubbleId)) {
       if (m.status != 'accepted') continue;
       router.fanOut(m.userId, forwarded);
@@ -1601,6 +1619,32 @@ class XmppWsSession implements XmppSession {
     if (id != null) copy.setAttribute('id', id);
     return copy.toXmlString();
   }
+
+  /// Like [_rewriteFrom] but also stamps an XEP-0359 `<stanza-id>` so the
+  /// client can dedupe/anchor on the server-assigned id.
+  String _rewriteFromStamped(
+    XmlElement el, {
+    required String id,
+    required String by,
+  }) {
+    final copy = el.copy();
+    copy.setAttribute('xmlns', Ns.client);
+    copy.setAttribute('from', _jid.toString());
+    copy.setAttribute('id', id);
+    copy.children.add(
+      XmlElement(XmlName('stanza-id'), [
+        XmlAttribute(XmlName('xmlns'), Ns.uniqueId),
+        XmlAttribute(XmlName('id'), id),
+        XmlAttribute(XmlName('by'), by),
+      ]),
+    );
+    return copy.toXmlString();
+  }
+
+  /// XEP-0334 `<no-store>` hint — the sender asks us not to archive.
+  bool _hasNoStore(XmlElement el) => el.children.whereType<XmlElement>().any(
+    (e) => e.name.namespaceUri == Ns.hints && e.localName == 'no-store',
+  );
 
   void _handlePresence(XmlElement el) {
     if (_state != _State.bound) return;
