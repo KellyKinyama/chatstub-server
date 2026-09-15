@@ -36,7 +36,7 @@ uses in its Vue components, vs. what the stub answers today.
 | **Bookmarked rooms** | XEP-0048 / 0049 `storage:bookmarks` | ✅ | **B1** |
 | **Room create / config** | XEP-0045 `muc#owner` + XEP-0004 forms | ✅ | **B2** |
 | MUC self-ping / request voice | `muc#request` | 🟡 forwarded | **B2** |
-| **Message moderation** | XEP-0425 `message-moderate:0` | ⬜ | **C1** |
+| **Message moderation** | XEP-0425 `message-moderate:0` | ✅ | **C1** |
 | Stanza-id stamping | XEP-0359 `sid:0` | 🟡 in MAM only | **C2** |
 | Message hints | XEP-0334 `hints` | 🟡 partial | **C2** |
 | Styling passthrough | XEP-0393 | ✅ (opaque body) | — |
@@ -216,7 +216,17 @@ uses in its Vue components, vs. what the stub answers today.
 
 ## Phase C — moderation & wire polish
 
-### C1 · XEP-0425 message moderation (M) — ⬜
+### C1 · XEP-0425 message moderation (M) — ✅
+
+- **Landed** on `feat/xmpp-web-parity`: an owner/moderator sends
+  `<iq set><apply-to xmlns=fasten:0><moderate xmlns=message-moderate:0>`;
+  the server redacts the archived body and fans out a `<moderated>`
+  tombstone (`fasten:0` / `message-moderate:0` / `message-retract:0`,
+  matching xmpp-web's read filters) to occupants. Later MAM queries
+  emit the tombstone instead of the body. Non-owners get `<forbidden/>`;
+  unknown room/message get `<item-not-found/>`. New `moderations` table
+  + `BubbleRepository.moderateMessage`/`moderationFor`. Tests:
+  `test/xmpp_moderation_test.dart` (3 cases, green).
 
 - **What:** Handle the moderation `<moderate>` IQ (owner/admin only)
   against a MUC message id; broadcast the XEP-0425 `<moderated>`
@@ -268,7 +278,6 @@ uses in its Vue components, vs. what the stub answers today.
 4. **B1** (bookmarks) — ✅ done.
 5. **B2** (MUC owner) — ✅ done.
 6. **C1** (moderation) → **C2** (stanza-id/hints) → **C3** (autodiscovery, opt).
-
 Every phase lands with: a focused stub test, a `disco#info` feature
 entry where applicable, and a one-line note in `README.md`'s roadmap
 snapshot. Keep PLAIN + existing wire behavior byte-stable.
