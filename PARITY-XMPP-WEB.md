@@ -34,8 +34,8 @@ uses in its Vue components, vs. what the stub answers today.
 | **File sharing** | XEP-0363 `http:upload:0` | ✅ | **A3** |
 | OOB url in message | XEP-0066 `jabber:x:oob` | ✅ forwarded | — |
 | **Bookmarked rooms** | XEP-0048 / 0049 `storage:bookmarks` | ✅ | **B1** |
-| **Room create / config** | XEP-0045 `muc#owner` + XEP-0004 forms | 🟡 join only | **B2** |
-| MUC self-ping / request voice | `muc#request` | ⬜ | **B2** |
+| **Room create / config** | XEP-0045 `muc#owner` + XEP-0004 forms | ✅ | **B2** |
+| MUC self-ping / request voice | `muc#request` | 🟡 forwarded | **B2** |
 | **Message moderation** | XEP-0425 `message-moderate:0` | ⬜ | **C1** |
 | Stanza-id stamping | XEP-0359 `sid:0` | 🟡 in MAM only | **C2** |
 | Message hints | XEP-0334 `hints` | 🟡 partial | **C2** |
@@ -175,7 +175,22 @@ uses in its Vue components, vs. what the stub answers today.
   `test/xmpp_private_storage_test.dart` green.
 - **Depends on:** nothing.
 
-### B2 · XEP-0045 MUC owner config + `muc#request` (L) — 🟡
+### B2 · XEP-0045 MUC owner config + `muc#request` (L) — ✅
+
+- **Landed** on `feat/xmpp-web-parity`: joining a non-existent room
+  creates it with the joiner as owner (self-presence carries `110`+`201`);
+  registered non-members open-join public rooms (enrolled as accepted);
+  members-only rooms and guests are refused. `muc#owner` get returns a
+  `muc#roomconfig` data form, set (owner-only) applies roomname→name,
+  roomdesc→topic, members-only→visibility and broadcasts the subject;
+  the current subject is delivered to joiners (XEP-0045 §7.2.14).
+  `muc#request` voice forms are delivered to occupants (owner grants).
+  New `BubbleRepository.createWithId`. Tests:
+  `test/xmpp_muc_owner_test.dart` (5 cases, green).
+- **Known limitation:** guest (SASL ANONYMOUS) MUC join is still blocked
+  — `bubble_members` has a FK to `users(id)`, so guests can't be enrolled.
+  Live guest-occupant delivery needs an in-memory occupant registry;
+  tracked as a follow-up.
 
 - **What:** Grow "MUC light" into: room creation via presence to a
   non-existent room (creator becomes owner), `muc#owner` config form
@@ -251,7 +266,7 @@ uses in its Vue components, vs. what the stub answers today.
 2. **A2** (vCard) — ✅ done.
 3. **A3** (HTTP upload) — ✅ done.
 4. **B1** (bookmarks) — ✅ done.
-5. **B2** (MUC owner) — larger; prerequisite for moderation.
+5. **B2** (MUC owner) — ✅ done.
 6. **C1** (moderation) → **C2** (stanza-id/hints) → **C3** (autodiscovery, opt).
 
 Every phase lands with: a focused stub test, a `disco#info` feature
