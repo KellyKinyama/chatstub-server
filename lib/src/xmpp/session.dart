@@ -12,6 +12,7 @@ import '../messages/message_repository.dart';
 import '../messages/reaction_repository.dart';
 import '../push/push_token_repository.dart';
 import '../sip/sip_gateway.dart';
+import '../files/http_upload.dart';
 import '../users/avatar_store.dart';
 import '../users/presence_repository.dart';
 import '../users/roster_repository.dart';
@@ -51,6 +52,8 @@ class Ns {
   static const mucCall = 'urn:rainbow:muc-call:1';
   static const lastActivity = 'jabber:iq:last';
   static const vcard = 'vcard-temp';
+  static const httpUpload = 'urn:xmpp:http:upload:0';
+  static const dataForm = 'jabber:x:data';
 }
 
 /// Server-wide registry of resumable Stream Management sessions.
@@ -150,6 +153,8 @@ class XmppWsSession implements XmppSession {
     required this.pushTokens,
     required this.avatars,
     required this.vcards,
+    required this.upload,
+    required this.uploadBaseUrl,
     this.allowAnonymous = false,
     this.anonymousHost,
     this.sipGateway,
@@ -170,6 +175,8 @@ class XmppWsSession implements XmppSession {
   final PushTokenRepository pushTokens;
   final AvatarStore avatars;
   final VcardRepository vcards;
+  final HttpUploadService upload;
+  final String uploadBaseUrl;
   final bool allowAnonymous;
   final String? anonymousHost;
   final SipGateway? sipGateway;
@@ -671,6 +678,12 @@ class XmppWsSession implements XmppSession {
       _handleVcard(id, type!, el.getAttribute('to'), vcardEl);
       return;
     }
+    // XEP-0363 HTTP Upload slot request.
+    final uploadReq = el.getElement('request', namespace: Ns.httpUpload);
+    if (uploadReq != null && type == 'get') {
+      _handleUploadSlot(id, uploadReq);
+      return;
+    }
     // XEP-0280 carbons enable / disable.
     final carbonsEnable = el.getElement('enable', namespace: Ns.carbons2);
     final carbonsDisable = el.getElement('disable', namespace: Ns.carbons2);
@@ -776,7 +789,7 @@ class XmppWsSession implements XmppSession {
   }
 
   void _replyDiscoInfo(String id) {
-    const feats = [
+    final feats = [
       Ns.ping,
       Ns.roster,
       Ns.mam2,
@@ -791,6 +804,7 @@ class XmppWsSession implements XmppSession {
       Ns.rsm,
       Ns.jingle,
       Ns.vcard,
+      if (upload.maxFileSize > 0) Ns.httpUpload,
     ];
     final buf = StringBuffer(
       '<iq type="result" id="${_esc(id)}" from="${_esc(domain)}" '
@@ -801,8 +815,54 @@ class XmppWsSession implements XmppSession {
     for (final f in feats) {
       buf.write('<feature var="${_esc(f)}"/>');
     }
+    // XEP-0363 advertises its cap via a data form (read by the client's
+    // getMaxFileSize()).
+    if (upload.maxFileSize > 0) {
+      buf.write(
+        '<x xmlns="${Ns.dataForm}" type="result">'
+        '<field var="FORM_TYPE" type="hidden">'
+        '<value>${Ns.httpUpload}</value></field>'
+        '<field var="max-file-size">'
+        '<value>${upload.maxFileSize}</value></field>'
+        '</x>',
+      );
+    }
     buf.write('</query></iq>');
     send(buf.toString());
+  }
+
+  /// XEP-0363 slot request — mints PUT/GET URLs for [uploadBaseUrl], or
+  /// returns `<file-too-large>` when the requested size exceeds the cap.
+  void _handleUploadSlot(String id, XmlElement request) {
+    final filename = request.getAttribute('filename') ?? 'file';
+    final size = int.tryParse(request.getAttribute('size') ?? '') ?? 0;
+    final contentType = request.getAttribute('content-type');
+    try {
+      final token = upload.requestSlot(
+        filename: filename,
+        size: size,
+        contentType: contentType,
+      );
+      final url = '$uploadBaseUrl/upload/$token';
+      send(
+        '<iq type="result" id="${_esc(id)}" from="${_esc(domain)}" '
+        'to="${_esc(_jid.toString())}">'
+        '<slot xmlns="${Ns.httpUpload}">'
+        '<put url="${_esc(url)}"/>'
+        '<get url="${_esc(url)}"/>'
+        '</slot></iq>',
+      );
+    } on FileTooLargeException catch (e) {
+      send(
+        '<iq type="error" id="${_esc(id)}" from="${_esc(domain)}" '
+        'to="${_esc(_jid.toString())}">'
+        '<error type="modify">'
+        '<not-acceptable xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '<file-too-large xmlns="${Ns.httpUpload}">'
+        '<max-file-size>${e.maxFileSize}</max-file-size>'
+        '</file-too-large></error></iq>',
+      );
+    }
   }
 
   void _replyRosterGet(String id) {

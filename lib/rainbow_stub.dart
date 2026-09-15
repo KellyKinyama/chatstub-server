@@ -18,6 +18,8 @@ export 'src/messages/message_repository.dart';
 export 'src/bubbles/bubble_repository.dart';
 export 'src/bubbles/routes.dart';
 export 'src/files/file_store.dart';
+export 'src/files/http_upload.dart';
+export 'src/files/http_upload_routes.dart';
 export 'src/files/routes.dart';
 export 'src/calllog/calllog_repository.dart';
 export 'src/calllog/routes.dart';

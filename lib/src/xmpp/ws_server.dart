@@ -4,6 +4,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 
 import '../auth/auth_service.dart';
 import '../bubbles/bubble_repository.dart';
+import '../files/http_upload.dart';
 import '../messages/message_repository.dart';
 import '../messages/reaction_repository.dart';
 import '../push/push_token_repository.dart';
@@ -32,6 +33,8 @@ Handler xmppWebSocketHandler({
   required PushTokenRepository pushTokens,
   required AvatarStore avatars,
   required VcardRepository vcards,
+  required HttpUploadService upload,
+  required String uploadBaseUrl,
   bool allowAnonymous = false,
   String? anonymousHost,
   SipGateway? sipGateway,
@@ -53,6 +56,8 @@ Handler xmppWebSocketHandler({
       pushTokens: pushTokens,
       avatars: avatars,
       vcards: vcards,
+      upload: upload,
+      uploadBaseUrl: uploadBaseUrl,
       allowAnonymous: allowAnonymous,
       anonymousHost: anonymousHost,
       sipGateway: sipGateway,

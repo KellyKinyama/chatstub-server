@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:logging/logging.dart';
 import 'package:shelf/shelf.dart';
@@ -15,6 +16,8 @@ import 'config/config.dart';
 import 'db/database.dart';
 import 'events/event_pusher.dart';
 import 'files/file_store.dart';
+import 'files/http_upload.dart';
+import 'files/http_upload_routes.dart' as upload_routes;
 import 'files/routes.dart' as file_routes;
 import 'messages/message_repository.dart';
 import 'messages/reaction_repository.dart';
@@ -47,6 +50,7 @@ class RainbowStubApp {
     required this.reactions,
     required this.bubbles,
     required this.files,
+    required this.upload,
     required this.callLog,
     required this.tokens,
     required this.pushTokens,
@@ -69,6 +73,7 @@ class RainbowStubApp {
   final ReactionRepository reactions;
   final BubbleRepository bubbles;
   final FileStore files;
+  final HttpUploadService upload;
   final CallLogRepository callLog;
   final TokenStore tokens;
   final PushTokenRepository pushTokens;
@@ -94,6 +99,12 @@ class RainbowStubApp {
     final reactions = ReactionRepository(db);
     final bubbles = BubbleRepository(db, ids);
     final files = FileStore(rootDir: config.fileStorePath, db: db, ids: ids);
+    final upload = HttpUploadService(
+      rootDir: '${config.fileStorePath}${Platform.pathSeparator}upload',
+      maxFileSize: config.httpUpload.enabled
+          ? config.httpUpload.maxFileSizeBytes
+          : 0,
+    );
     final callLog = CallLogRepository(db, ids);
     final tokens = TokenStore(db);
     final pushTokens = PushTokenRepository(db);
@@ -134,6 +145,7 @@ class RainbowStubApp {
       reactions: reactions,
       bubbles: bubbles,
       files: files,
+      upload: upload,
       callLog: callLog,
       tokens: tokens,
       pushTokens: pushTokens,
@@ -161,6 +173,8 @@ class RainbowStubApp {
       pushTokens: pushTokens,
       avatars: avatars,
       vcards: vcards,
+      upload: upload,
+      uploadBaseUrl: config.publicBaseUrl,
       allowAnonymous: config.anonymous.enabled,
       anonymousHost: config.anonymous.host,
       sipGateway: sipGateway,
@@ -174,6 +188,9 @@ class RainbowStubApp {
         ),
       )
       ..get('/websocket', wsHandler);
+    if (config.httpUpload.enabled) {
+      router.mount('/', upload_routes.httpUploadRouter(upload).call);
+    }
     if (config.metrics.enabled) {
       router.get(config.metrics.path, (Request _) {
         return Response.ok(
