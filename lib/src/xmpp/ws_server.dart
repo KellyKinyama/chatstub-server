@@ -4,13 +4,17 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 
 import '../auth/auth_service.dart';
 import '../bubbles/bubble_repository.dart';
+import '../files/http_upload.dart';
 import '../messages/message_repository.dart';
 import '../messages/reaction_repository.dart';
 import '../push/push_token_repository.dart';
 import '../sip/sip_gateway.dart';
+import '../users/avatar_store.dart';
 import '../users/presence_repository.dart';
+import '../users/private_storage_repository.dart';
 import '../users/roster_repository.dart';
 import '../users/user_repository.dart';
+import '../users/vcard_repository.dart';
 import 'router.dart';
 import 'session.dart';
 
@@ -28,6 +32,13 @@ Handler xmppWebSocketHandler({
   required StanzaRouter router,
   required SmRegistry smRegistry,
   required PushTokenRepository pushTokens,
+  required AvatarStore avatars,
+  required VcardRepository vcards,
+  required PrivateStorageRepository privateStorage,
+  required HttpUploadService upload,
+  required String uploadBaseUrl,
+  bool allowAnonymous = false,
+  String? anonymousHost,
   SipGateway? sipGateway,
 }) {
   return webSocketHandler((channel, protocol) async {
@@ -45,6 +56,13 @@ Handler xmppWebSocketHandler({
       router: router,
       smRegistry: smRegistry,
       pushTokens: pushTokens,
+      avatars: avatars,
+      vcards: vcards,
+      privateStorage: privateStorage,
+      upload: upload,
+      uploadBaseUrl: uploadBaseUrl,
+      allowAnonymous: allowAnonymous,
+      anonymousHost: anonymousHost,
       sipGateway: sipGateway,
     );
     await session.run();

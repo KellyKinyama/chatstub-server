@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:logging/logging.dart';
 import 'package:shelf/shelf.dart';
@@ -15,6 +16,8 @@ import 'config/config.dart';
 import 'db/database.dart';
 import 'events/event_pusher.dart';
 import 'files/file_store.dart';
+import 'files/http_upload.dart';
+import 'files/http_upload_routes.dart' as upload_routes;
 import 'files/routes.dart' as file_routes;
 import 'messages/message_repository.dart';
 import 'messages/reaction_repository.dart';
@@ -27,6 +30,8 @@ import 'users/presence_repository.dart';
 import 'users/roster_repository.dart';
 import 'users/routes.dart';
 import 'users/user_repository.dart';
+import 'users/private_storage_repository.dart';
+import 'users/vcard_repository.dart';
 import 'util/errors.dart';
 import 'util/ids.dart';
 import 'xmpp/router.dart';
@@ -41,10 +46,13 @@ class RainbowStubApp {
     required this.roster,
     required this.presence,
     required this.avatars,
+    required this.vcards,
+    required this.privateStorage,
     required this.messages,
     required this.reactions,
     required this.bubbles,
     required this.files,
+    required this.upload,
     required this.callLog,
     required this.tokens,
     required this.pushTokens,
@@ -62,10 +70,13 @@ class RainbowStubApp {
   final RosterRepository roster;
   final PresenceRepository presence;
   final AvatarStore avatars;
+  final VcardRepository vcards;
+  final PrivateStorageRepository privateStorage;
   final MessageRepository messages;
   final ReactionRepository reactions;
   final BubbleRepository bubbles;
   final FileStore files;
+  final HttpUploadService upload;
   final CallLogRepository callLog;
   final TokenStore tokens;
   final PushTokenRepository pushTokens;
@@ -86,10 +97,18 @@ class RainbowStubApp {
     final roster = RosterRepository(db, users);
     final presence = PresenceRepository(db);
     final avatars = AvatarStore(rootDir: config.avatarStorePath, db: db);
+    final vcards = VcardRepository(db);
+    final privateStorage = PrivateStorageRepository(db);
     final messages = MessageRepository(db, ids);
     final reactions = ReactionRepository(db);
     final bubbles = BubbleRepository(db, ids);
     final files = FileStore(rootDir: config.fileStorePath, db: db, ids: ids);
+    final upload = HttpUploadService(
+      rootDir: '${config.fileStorePath}${Platform.pathSeparator}upload',
+      maxFileSize: config.httpUpload.enabled
+          ? config.httpUpload.maxFileSizeBytes
+          : 0,
+    );
     final callLog = CallLogRepository(db, ids);
     final tokens = TokenStore(db);
     final pushTokens = PushTokenRepository(db);
@@ -125,10 +144,13 @@ class RainbowStubApp {
       roster: roster,
       presence: presence,
       avatars: avatars,
+      vcards: vcards,
+      privateStorage: privateStorage,
       messages: messages,
       reactions: reactions,
       bubbles: bubbles,
       files: files,
+      upload: upload,
       callLog: callLog,
       tokens: tokens,
       pushTokens: pushTokens,
@@ -154,6 +176,13 @@ class RainbowStubApp {
       router: xmppRouter,
       smRegistry: smRegistry,
       pushTokens: pushTokens,
+      avatars: avatars,
+      vcards: vcards,
+      privateStorage: privateStorage,
+      upload: upload,
+      uploadBaseUrl: config.publicBaseUrl,
+      allowAnonymous: config.anonymous.enabled,
+      anonymousHost: config.anonymous.host,
       sipGateway: sipGateway,
     );
     final router = Router()
@@ -165,6 +194,9 @@ class RainbowStubApp {
         ),
       )
       ..get('/websocket', wsHandler);
+    if (config.httpUpload.enabled) {
+      router.mount('/', upload_routes.httpUploadRouter(upload).call);
+    }
     if (config.metrics.enabled) {
       router.get(config.metrics.path, (Request _) {
         return Response.ok(
@@ -237,85 +269,84 @@ class RainbowStubApp {
 Middleware _accessLog(MetricsRegistry metrics) {
   final log = Logger('http');
   return (inner) => (req) async {
-        final sw = Stopwatch()..start();
-        try {
-          final res = await inner(req);
-          final dur = sw.elapsedMicroseconds / 1e6;
-          log.log(
-            Level.INFO,
-            '${req.method} ${req.requestedUri.path} '
-            '${res.statusCode} ${sw.elapsedMilliseconds}ms',
-            <String, Object?>{
-              'method': req.method,
-              'path': req.requestedUri.path,
-              'status': res.statusCode,
-              'duration_ms': sw.elapsedMilliseconds,
-              'remote':
-                  req.headers['x-forwarded-for'] ?? req.headers['host'] ?? '',
-            },
-          );
-          metrics.inc(
-            'rainbow_stub_http_requests_total',
-            labels: {'method': req.method, 'code': res.statusCode.toString()},
-          );
-          metrics.observe(
-            'rainbow_stub_http_request_duration_seconds',
-            dur,
-            labels: {'method': req.method},
-          );
-          return res;
-        } on HijackException {
-          log.log(
-            Level.INFO,
-            '${req.method} ${req.requestedUri.path} '
-            'HIJACK ${sw.elapsedMilliseconds}ms',
-            <String, Object?>{
-              'method': req.method,
-              'path': req.requestedUri.path,
-              'status': 101,
-              'duration_ms': sw.elapsedMilliseconds,
-              'hijack': true,
-            },
-          );
-          metrics.inc(
-            'rainbow_stub_http_requests_total',
-            labels: {'method': req.method, 'code': '101'},
-          );
-          rethrow;
-        } catch (e, st) {
-          log.severe('${req.method} ${req.requestedUri.path} FAILED', e, st);
-          metrics.inc(
-            'rainbow_stub_http_requests_total',
-            labels: {'method': req.method, 'code': '500'},
-          );
-          rethrow;
-        }
-      };
+    final sw = Stopwatch()..start();
+    try {
+      final res = await inner(req);
+      final dur = sw.elapsedMicroseconds / 1e6;
+      log.log(
+        Level.INFO,
+        '${req.method} ${req.requestedUri.path} '
+        '${res.statusCode} ${sw.elapsedMilliseconds}ms',
+        <String, Object?>{
+          'method': req.method,
+          'path': req.requestedUri.path,
+          'status': res.statusCode,
+          'duration_ms': sw.elapsedMilliseconds,
+          'remote': req.headers['x-forwarded-for'] ?? req.headers['host'] ?? '',
+        },
+      );
+      metrics.inc(
+        'rainbow_stub_http_requests_total',
+        labels: {'method': req.method, 'code': res.statusCode.toString()},
+      );
+      metrics.observe(
+        'rainbow_stub_http_request_duration_seconds',
+        dur,
+        labels: {'method': req.method},
+      );
+      return res;
+    } on HijackException {
+      log.log(
+        Level.INFO,
+        '${req.method} ${req.requestedUri.path} '
+        'HIJACK ${sw.elapsedMilliseconds}ms',
+        <String, Object?>{
+          'method': req.method,
+          'path': req.requestedUri.path,
+          'status': 101,
+          'duration_ms': sw.elapsedMilliseconds,
+          'hijack': true,
+        },
+      );
+      metrics.inc(
+        'rainbow_stub_http_requests_total',
+        labels: {'method': req.method, 'code': '101'},
+      );
+      rethrow;
+    } catch (e, st) {
+      log.severe('${req.method} ${req.requestedUri.path} FAILED', e, st);
+      metrics.inc(
+        'rainbow_stub_http_requests_total',
+        labels: {'method': req.method, 'code': '500'},
+      );
+      rethrow;
+    }
+  };
 }
 
 Middleware _errorMapper() {
   final log = Logger('http.err');
   return (inner) => (req) async {
-        try {
-          return await inner(req);
-        } on HijackException {
-          rethrow;
-        } on RainbowError catch (e) {
-          return e.toResponse();
-        } on FormatException catch (e) {
-          return RainbowError.badRequest(
-            'Malformed JSON: ${e.message}',
-          ).toResponse();
-        } catch (e, st) {
-          log.severe('unhandled', e, st);
-          return RainbowError(
-            httpStatus: 500,
-            errorCode: 500,
-            errorMsg: 'Internal error',
-            errorDetails: e.toString(),
-          ).toResponse();
-        }
-      };
+    try {
+      return await inner(req);
+    } on HijackException {
+      rethrow;
+    } on RainbowError catch (e) {
+      return e.toResponse();
+    } on FormatException catch (e) {
+      return RainbowError.badRequest(
+        'Malformed JSON: ${e.message}',
+      ).toResponse();
+    } catch (e, st) {
+      log.severe('unhandled', e, st);
+      return RainbowError(
+        httpStatus: 500,
+        errorCode: 500,
+        errorMsg: 'Internal error',
+        errorDetails: e.toString(),
+      ).toResponse();
+    }
+  };
 }
 
 Middleware _cors() {
@@ -326,12 +357,12 @@ Middleware _cors() {
     'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
   };
   return (inner) => (req) async {
-        if (req.method == 'OPTIONS') {
-          return Response.ok('', headers: headers);
-        }
-        final res = await inner(req);
-        return res.change(headers: {...res.headers, ...headers});
-      };
+    if (req.method == 'OPTIONS') {
+      return Response.ok('', headers: headers);
+    }
+    final res = await inner(req);
+    return res.change(headers: {...res.headers, ...headers});
+  };
 }
 
 Middleware _securityHeaders(TlsConfig tls) {
@@ -343,15 +374,15 @@ Middleware _securityHeaders(TlsConfig tls) {
     'permissions-policy': 'geolocation=(), microphone=(), camera=()',
   };
   return (inner) => (req) async {
-        final res = await inner(req);
-        final headers = {...res.headers, ...base};
-        // Only advertise HSTS when the request actually reached us over TLS,
-        // otherwise browsers cache a broken policy.
-        if (tls.enabled && req.requestedUri.scheme == 'https') {
-          headers['strict-transport-security'] = tls.hstsHeader;
-        }
-        return res.change(headers: headers);
-      };
+    final res = await inner(req);
+    final headers = {...res.headers, ...base};
+    // Only advertise HSTS when the request actually reached us over TLS,
+    // otherwise browsers cache a broken policy.
+    if (tls.enabled && req.requestedUri.scheme == 'https') {
+      headers['strict-transport-security'] = tls.hstsHeader;
+    }
+    return res.change(headers: headers);
+  };
 }
 
 MetricsRegistry _initMetrics(

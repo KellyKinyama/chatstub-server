@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:logging/logging.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -11,9 +12,13 @@ import '../messages/message_repository.dart';
 import '../messages/reaction_repository.dart';
 import '../push/push_token_repository.dart';
 import '../sip/sip_gateway.dart';
+import '../files/http_upload.dart';
+import '../users/avatar_store.dart';
 import '../users/presence_repository.dart';
+import '../users/private_storage_repository.dart';
 import '../users/roster_repository.dart';
 import '../users/user_repository.dart';
+import '../users/vcard_repository.dart';
 import 'jid.dart';
 import 'router.dart';
 
@@ -39,14 +44,24 @@ class Ns {
   static const chatMarkers = 'urn:xmpp:chat-markers:0';
   static const reactions = 'urn:xmpp:reactions:0';
   static const messageRetract = 'urn:xmpp:message-retract:1';
+  static const fasten = 'urn:xmpp:fasten:0';
+  static const moderate0 = 'urn:xmpp:message-moderate:0';
+  static const retract0 = 'urn:xmpp:message-retract:0';
   static const muc = 'http://jabber.org/protocol/muc';
   static const mucUser = 'http://jabber.org/protocol/muc#user';
+  static const mucOwner = 'http://jabber.org/protocol/muc#owner';
   static const sm3 = 'urn:xmpp:sm:3';
   static const carbons2 = 'urn:xmpp:carbons:2';
   static const rsm = 'http://jabber.org/protocol/rsm';
   static const jingle = 'urn:xmpp:jingle:1';
   static const mucCall = 'urn:rainbow:muc-call:1';
   static const lastActivity = 'jabber:iq:last';
+  static const uniqueId = 'urn:xmpp:sid:0';
+  static const hints = 'urn:xmpp:hints';
+  static const vcard = 'vcard-temp';
+  static const httpUpload = 'urn:xmpp:http:upload:0';
+  static const dataForm = 'jabber:x:data';
+  static const privateStorage = 'jabber:iq:private';
 }
 
 /// Server-wide registry of resumable Stream Management sessions.
@@ -144,6 +159,13 @@ class XmppWsSession implements XmppSession {
     required this.router,
     required this.smRegistry,
     required this.pushTokens,
+    required this.avatars,
+    required this.vcards,
+    required this.privateStorage,
+    required this.upload,
+    required this.uploadBaseUrl,
+    this.allowAnonymous = false,
+    this.anonymousHost,
     this.sipGateway,
     this.limits = const XmppLimits(),
   }) : _channel = channel;
@@ -160,6 +182,13 @@ class XmppWsSession implements XmppSession {
   final StanzaRouter router;
   final SmRegistry smRegistry;
   final PushTokenRepository pushTokens;
+  final AvatarStore avatars;
+  final VcardRepository vcards;
+  final PrivateStorageRepository privateStorage;
+  final HttpUploadService upload;
+  final String uploadBaseUrl;
+  final bool allowAnonymous;
+  final String? anonymousHost;
   final SipGateway? sipGateway;
   final XmppLimits limits;
 
@@ -168,6 +197,9 @@ class XmppWsSession implements XmppSession {
   Jid _jid = const Jid(local: '', domain: '');
   String _userId = '';
   int _saslFailures = 0;
+
+  // SASL ANONYMOUS (RFC 4505) guest session — no backing user row.
+  bool _isAnonymous = false;
 
   // XEP-0198 stream management
   bool _smEnabled = false;
@@ -255,7 +287,7 @@ class XmppWsSession implements XmppSession {
     _stopKeepalive();
     router.unregister(this);
     if (_jid.local.isNotEmpty) {
-      presence.set(_userId, 'offline');
+      _persistPresence('offline');
       _fanOutPresenceAvailability(unavailable: true);
     }
     try {
@@ -268,7 +300,7 @@ class XmppWsSession implements XmppSession {
     _state = _State.closed;
     router.unregister(this);
     if (_jid.local.isNotEmpty) {
-      presence.set(_userId, 'offline');
+      _persistPresence('offline');
       _fanOutPresenceAvailability(unavailable: true);
     }
     try {
@@ -495,9 +527,11 @@ class XmppWsSession implements XmppSession {
       'id="${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}"/>',
     );
     if (_state == _State.streamOpened) {
+      final mechs = StringBuffer('<mechanism>PLAIN</mechanism>');
+      if (allowAnonymous) mechs.write('<mechanism>ANONYMOUS</mechanism>');
       send(
         '<stream:features xmlns:stream="${Ns.streams}">'
-        '<mechanisms xmlns="${Ns.sasl}"><mechanism>PLAIN</mechanism></mechanisms>'
+        '<mechanisms xmlns="${Ns.sasl}">$mechs</mechanisms>'
         '</stream:features>',
       );
     } else if (_state == _State.authenticated) {
@@ -517,7 +551,12 @@ class XmppWsSession implements XmppSession {
   }
 
   void _handleAuth(XmlElement el) {
-    if (el.getAttribute('mechanism') != 'PLAIN') {
+    final mechanism = el.getAttribute('mechanism');
+    if (mechanism == 'ANONYMOUS') {
+      _handleAnonymousAuth();
+      return;
+    }
+    if (mechanism != 'PLAIN') {
       _saslFailure('<invalid-mechanism/>');
       return;
     }
@@ -548,6 +587,36 @@ class XmppWsSession implements XmppSession {
     _state = _State.authenticated;
     _saslFailures = 0;
     send('<success xmlns="${Ns.sasl}"/>');
+  }
+
+  /// SASL ANONYMOUS (RFC 4505): mint an ephemeral guest identity on the
+  /// configured anon host (or the server domain when unset). No user row
+  /// exists, so presence is never persisted for these sessions.
+  void _handleAnonymousAuth() {
+    if (!allowAnonymous) {
+      _saslFailure('<invalid-mechanism/>');
+      return;
+    }
+    _isAnonymous = true;
+    _userId = _newGuestLocal();
+    _jid = Jid(local: _userId, domain: anonymousHost ?? domain);
+    _state = _State.authenticated;
+    _saslFailures = 0;
+    send('<success xmlns="${Ns.sasl}"/>');
+  }
+
+  static String _newGuestLocal() {
+    final r = Random.secure();
+    final bytes = List<int>.generate(8, (_) => r.nextInt(256));
+    return 'guest-'
+        '${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  /// Guests (SASL ANONYMOUS) have no user row, so presence must not be
+  /// persisted — the presence table has a FK to users(id).
+  void _persistPresence(String show, {String? status}) {
+    if (_isAnonymous) return;
+    presence.set(_userId, show, status: status);
   }
 
   void _saslFailure(String reasonElement) {
@@ -582,7 +651,11 @@ class XmppWsSession implements XmppSession {
       }
       final res = bindEl.getElement('resource')?.innerText.trim();
       if (res != null && res.isNotEmpty) _resource = res;
-      _jid = Jid(local: _userId, domain: domain, resource: _resource);
+      _jid = Jid(
+        local: _userId,
+        domain: _isAnonymous ? (anonymousHost ?? domain) : domain,
+        resource: _resource,
+      );
       _state = _State.bound;
       router.register(this);
       send(
@@ -607,6 +680,42 @@ class XmppWsSession implements XmppSession {
     final rosterEl = el.getElement('query', namespace: Ns.roster);
     if (rosterEl != null && type == 'get') {
       _replyRosterGet(id);
+      return;
+    }
+    // XEP-0054 vcard-temp get/set.
+    final vcardEl = el.getElement('vCard', namespace: Ns.vcard);
+    if (vcardEl != null && (type == 'get' || type == 'set')) {
+      _handleVcard(id, type!, el.getAttribute('to'), vcardEl);
+      return;
+    }
+    // XEP-0049 private XML storage (backs XEP-0048 bookmarks).
+    final privateEl = el.getElement('query', namespace: Ns.privateStorage);
+    if (privateEl != null && (type == 'get' || type == 'set')) {
+      _handlePrivateStorage(id, type!, privateEl);
+      return;
+    }
+    // XEP-0045 muc#owner room configuration.
+    final mucOwnerEl = el.getElement('query', namespace: Ns.mucOwner);
+    if (mucOwnerEl != null && (type == 'get' || type == 'set')) {
+      _handleMucOwner(id, type!, el.getAttribute('to'), mucOwnerEl);
+      return;
+    }
+    // XEP-0425 message moderation (moderator retracts a MUC message).
+    final applyToEl = el.getElement('apply-to', namespace: Ns.fasten);
+    if (applyToEl != null && type == 'set') {
+      final moderateEl = applyToEl.getElement(
+        'moderate',
+        namespace: Ns.moderate0,
+      );
+      if (moderateEl != null) {
+        _handleModeration(id, el.getAttribute('to'), applyToEl, moderateEl);
+        return;
+      }
+    }
+    // XEP-0363 HTTP Upload slot request.
+    final uploadReq = el.getElement('request', namespace: Ns.httpUpload);
+    if (uploadReq != null && type == 'get') {
+      _handleUploadSlot(id, uploadReq);
       return;
     }
     // XEP-0280 carbons enable / disable.
@@ -714,7 +823,7 @@ class XmppWsSession implements XmppSession {
   }
 
   void _replyDiscoInfo(String id) {
-    const feats = [
+    final feats = [
       Ns.ping,
       Ns.roster,
       Ns.mam2,
@@ -724,10 +833,15 @@ class XmppWsSession implements XmppSession {
       Ns.discoInfo,
       Ns.discoItems,
       Ns.muc,
+      Ns.mucOwner,
       Ns.sm3,
       Ns.carbons2,
       Ns.rsm,
       Ns.jingle,
+      Ns.vcard,
+      Ns.uniqueId,
+      Ns.moderate0,
+      if (upload.maxFileSize > 0) Ns.httpUpload,
     ];
     final buf = StringBuffer(
       '<iq type="result" id="${_esc(id)}" from="${_esc(domain)}" '
@@ -738,8 +852,54 @@ class XmppWsSession implements XmppSession {
     for (final f in feats) {
       buf.write('<feature var="${_esc(f)}"/>');
     }
+    // XEP-0363 advertises its cap via a data form (read by the client's
+    // getMaxFileSize()).
+    if (upload.maxFileSize > 0) {
+      buf.write(
+        '<x xmlns="${Ns.dataForm}" type="result">'
+        '<field var="FORM_TYPE" type="hidden">'
+        '<value>${Ns.httpUpload}</value></field>'
+        '<field var="max-file-size">'
+        '<value>${upload.maxFileSize}</value></field>'
+        '</x>',
+      );
+    }
     buf.write('</query></iq>');
     send(buf.toString());
+  }
+
+  /// XEP-0363 slot request — mints PUT/GET URLs for [uploadBaseUrl], or
+  /// returns `<file-too-large>` when the requested size exceeds the cap.
+  void _handleUploadSlot(String id, XmlElement request) {
+    final filename = request.getAttribute('filename') ?? 'file';
+    final size = int.tryParse(request.getAttribute('size') ?? '') ?? 0;
+    final contentType = request.getAttribute('content-type');
+    try {
+      final token = upload.requestSlot(
+        filename: filename,
+        size: size,
+        contentType: contentType,
+      );
+      final url = '$uploadBaseUrl/upload/$token';
+      send(
+        '<iq type="result" id="${_esc(id)}" from="${_esc(domain)}" '
+        'to="${_esc(_jid.toString())}">'
+        '<slot xmlns="${Ns.httpUpload}">'
+        '<put url="${_esc(url)}"/>'
+        '<get url="${_esc(url)}"/>'
+        '</slot></iq>',
+      );
+    } on FileTooLargeException catch (e) {
+      send(
+        '<iq type="error" id="${_esc(id)}" from="${_esc(domain)}" '
+        'to="${_esc(_jid.toString())}">'
+        '<error type="modify">'
+        '<not-acceptable xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '<file-too-large xmlns="${Ns.httpUpload}">'
+        '<max-file-size>${e.maxFileSize}</max-file-size>'
+        '</file-too-large></error></iq>',
+      );
+    }
   }
 
   void _replyRosterGet(String id) {
@@ -758,6 +918,133 @@ class XmppWsSession implements XmppSession {
     }
     buf.write('</query></iq>');
     send(buf.toString());
+  }
+
+  /// XEP-0054 vcard-temp. `get` returns the target user's card (self when
+  /// unaddressed); `set` persists the authenticated user's card. PHOTO is
+  /// bridged to the avatar store so REST and XMPP surfaces stay in sync.
+  void _handleVcard(String id, String type, String? toAttr, XmlElement vcard) {
+    if (type == 'set') {
+      if (_isAnonymous) {
+        send(
+          '<iq type="error" id="${_esc(id)}"><error type="auth">'
+          '<forbidden xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+          '</error></iq>',
+        );
+        return;
+      }
+      final fn = vcard.getElement('FN')?.innerText.trim();
+      final nickname = vcard.getElement('NICKNAME')?.innerText.trim();
+      final email = vcard
+          .getElement('EMAIL')
+          ?.getElement('USERID')
+          ?.innerText
+          .trim();
+      vcards.upsert(
+        _userId,
+        fn: (fn == null || fn.isEmpty) ? null : fn,
+        nickname: (nickname == null || nickname.isEmpty) ? null : nickname,
+        email: (email == null || email.isEmpty) ? null : email,
+      );
+      final photo = vcard.getElement('PHOTO');
+      final binval = photo?.getElement('BINVAL')?.innerText;
+      final mime = photo?.getElement('TYPE')?.innerText.trim();
+      if (binval != null && binval.trim().isNotEmpty) {
+        try {
+          final bytes = base64.decode(binval.replaceAll(RegExp(r'\s'), ''));
+          avatars.writeSync(
+            _userId,
+            bytes,
+            (mime == null || mime.isEmpty) ? 'image/png' : mime,
+          );
+        } on FormatException {
+          // Ignore a malformed PHOTO — text fields are already persisted.
+        }
+      }
+      send('<iq type="result" id="${_esc(id)}"/>');
+      return;
+    }
+
+    // get
+    final targetId = (toAttr == null || toAttr.isEmpty)
+        ? _userId
+        : Jid.parse(toAttr).local;
+    final user = users.findById(targetId);
+    final stored = vcards.find(targetId);
+    final fn = stored?.fn ?? user?.displayName ?? '';
+    final nickname = stored?.nickname ?? user?.nickName;
+    final email = stored?.email ?? user?.loginEmail;
+    final photo = avatars.readSync(targetId);
+
+    final buf = StringBuffer(
+      '<iq type="result" id="${_esc(id)}" '
+      'from="${_esc('$targetId@$domain')}">'
+      '<vCard xmlns="${Ns.vcard}">',
+    );
+    if (fn.isNotEmpty) buf.write('<FN>${_esc(fn)}</FN>');
+    if (nickname != null && nickname.isNotEmpty) {
+      buf.write('<NICKNAME>${_esc(nickname)}</NICKNAME>');
+    }
+    if (email != null && email.isNotEmpty) {
+      buf.write('<EMAIL><INTERNET/><USERID>${_esc(email)}</USERID></EMAIL>');
+    }
+    if (photo != null) {
+      buf.write(
+        '<PHOTO><TYPE>${_esc(photo.mimeType)}</TYPE>'
+        '<BINVAL>${base64.encode(photo.bytes)}</BINVAL></PHOTO>',
+      );
+    }
+    buf.write('</vCard></iq>');
+    send(buf.toString());
+  }
+
+  /// XEP-0049 private XML storage. The single child of `<query>` is keyed
+  /// by its `{namespace}localName`; `set` stores its raw serialization,
+  /// `get` returns the stored blob (or the empty requested element back).
+  void _handlePrivateStorage(String id, String type, XmlElement query) {
+    final child = query.childElements.isEmpty
+        ? null
+        : query.childElements.first;
+    if (child == null) {
+      send(
+        '<iq type="error" id="${_esc(id)}"><error type="modify">'
+        '<bad-request xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+    if (_isAnonymous) {
+      // Guests have no account to store against.
+      if (type == 'set') {
+        send(
+          '<iq type="error" id="${_esc(id)}"><error type="auth">'
+          '<forbidden xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+          '</error></iq>',
+        );
+      } else {
+        send(
+          '<iq type="result" id="${_esc(id)}">'
+          '<query xmlns="${Ns.privateStorage}">${child.toXmlString()}</query>'
+          '</iq>',
+        );
+      }
+      return;
+    }
+
+    final key = '{${child.name.namespaceUri ?? ''}}${child.name.local}';
+    if (type == 'set') {
+      privateStorage.upsert(_userId, key, child.toXmlString());
+      send('<iq type="result" id="${_esc(id)}"/>');
+      return;
+    }
+    // get
+    final stored = privateStorage.find(_userId, key);
+    send(
+      '<iq type="result" id="${_esc(id)}">'
+      '<query xmlns="${Ns.privateStorage}">'
+      '${stored ?? child.toXmlString()}'
+      '</query></iq>',
+    );
   }
 
   void _handleMamQuery(String queryId, XmlElement query) {
@@ -892,6 +1179,8 @@ class XmppWsSession implements XmppSession {
         '<message xmlns="${Ns.client}" from="${_esc(m.from.toString())}" '
         'to="${_esc(m.to.toString())}" type="chat" id="${_esc(m.stanzaId)}">'
         '<body>${_esc(m.body)}</body>'
+        '<stanza-id xmlns="${Ns.uniqueId}" id="${_esc(m.stanzaId)}" '
+        'by="${_esc(_jid.bare.toString())}"/>'
         '</message>';
     return '<message to="${_esc(_jid.toString())}">'
         '<result xmlns="${Ns.mam2}" queryid="${_esc(queryId)}" id="${_esc(m.id)}">'
@@ -905,18 +1194,32 @@ class XmppWsSession implements XmppSession {
 
   String _wrapBubbleForMam(String queryId, BubbleMessage m) {
     final roomJid = '${m.bubbleId}@${Ns.mucPrefix}$domain';
-    final threadXml = m.thread != null
-        ? '<thread>${_esc(m.thread!)}</thread>'
-        : '';
-    final subjectXml = m.subject != null
-        ? '<subject>${_esc(m.subject!)}</subject>'
-        : '';
-    final inner =
-        '<message xmlns="${Ns.client}" from="${_esc('$roomJid/${m.from.local}')}" '
-        'to="${_esc(roomJid)}" type="groupchat" id="${_esc(m.stanzaId)}">'
-        '<body>${_esc(m.body)}</body>'
-        '$threadXml$subjectXml'
-        '</message>';
+    final moderation = bubbles.moderationFor(m.bubbleId, m.stanzaId);
+    final String inner;
+    if (moderation != null) {
+      // XEP-0425: moderated messages surface as a tombstone in MAM.
+      inner = _moderationTombstone(
+        roomJid: roomJid,
+        targetId: m.stanzaId,
+        byJid: moderation.byJid,
+        reason: moderation.reason,
+      );
+    } else {
+      final threadXml = m.thread != null
+          ? '<thread>${_esc(m.thread!)}</thread>'
+          : '';
+      final subjectXml = m.subject != null
+          ? '<subject>${_esc(m.subject!)}</subject>'
+          : '';
+      inner =
+          '<message xmlns="${Ns.client}" from="${_esc('$roomJid/${m.from.local}')}" '
+          'to="${_esc(roomJid)}" type="groupchat" id="${_esc(m.stanzaId)}">'
+          '<body>${_esc(m.body)}</body>'
+          '<stanza-id xmlns="${Ns.uniqueId}" id="${_esc(m.stanzaId)}" '
+          'by="${_esc(roomJid)}"/>'
+          '$threadXml$subjectXml'
+          '</message>';
+    }
     return '<message to="${_esc(_jid.toString())}">'
         '<result xmlns="${Ns.mam2}" queryid="${_esc(queryId)}" id="${_esc(m.id)}">'
         '<forwarded xmlns="${Ns.forward}">'
@@ -1063,22 +1366,26 @@ class XmppWsSession implements XmppSession {
     }
     if (body == null) return;
 
+    final noStore = _hasNoStore(el);
     final stanzaId =
         el.getAttribute('id') ??
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-    final saved = messages.insert(
-      from: _jid,
-      to: to,
-      stanzaId: stanzaId,
-      body: body,
+    final archiveId = noStore
+        ? stanzaId
+        : messages
+              .insert(from: _jid, to: to, stanzaId: stanzaId, body: body)
+              .stanzaId;
+    final forwarded = _rewriteFromStamped(
+      el,
+      id: archiveId,
+      by: to.bare.toString(),
     );
-    final forwarded = _rewriteFrom(el, id: saved.stanzaId);
 
     // SIP-domain recipient — bridge to SIP MESSAGE instead of XMPP fan-out.
     final gw = sipGateway;
     if (gw != null && to.domain == gw.sipDomain) {
       unawaited(
-        gw.sendText(from: _jid, to: to, body: body, stanzaId: saved.stanzaId),
+        gw.sendText(from: _jid, to: to, body: body, stanzaId: archiveId),
       );
       for (final s in router.sessionsOf(_userId)) {
         if (identical(s, this)) continue;
@@ -1163,6 +1470,97 @@ class XmppWsSession implements XmppSession {
     }
   }
 
+  /// XEP-0425 moderation. A room owner/moderator retracts another member's
+  /// MUC message; the archived body is redacted and a `<moderated>`
+  /// tombstone is fanned out to occupants (and served by later MAM).
+  void _handleModeration(
+    String id,
+    String? toAttr,
+    XmlElement applyTo,
+    XmlElement moderate,
+  ) {
+    if (toAttr == null) {
+      _sendIqError(id, 'modify', 'bad-request');
+      return;
+    }
+    final room = Jid.parse(toAttr);
+    final bubbleId = room.local;
+    final bubble = bubbles.findById(bubbleId);
+    if (bubble == null) {
+      _sendIqError(id, 'cancel', 'item-not-found', from: toAttr);
+      return;
+    }
+    final me = bubbles.memberOf(bubbleId, _userId);
+    if (bubble.ownerId != _userId && me?.role != 'owner') {
+      _sendIqError(id, 'auth', 'forbidden', from: toAttr);
+      return;
+    }
+    final targetId = applyTo.getAttribute('id');
+    if (targetId == null || targetId.isEmpty) {
+      _sendIqError(id, 'modify', 'bad-request', from: toAttr);
+      return;
+    }
+    final target = bubbles.findMessageByStanzaId(bubbleId, targetId);
+    if (target == null) {
+      _sendIqError(id, 'cancel', 'item-not-found', from: toAttr);
+      return;
+    }
+    final reason = moderate.getElement('reason')?.innerText.trim();
+    final byJid = _jid.bare.toString();
+    bubbles.moderateMessage(
+      bubbleId,
+      targetId,
+      byJid: byJid,
+      reason: (reason != null && reason.isNotEmpty) ? reason : null,
+    );
+    send('<iq type="result" id="${_esc(id)}" from="${_esc(toAttr)}"/>');
+
+    final tombstone = _moderationTombstone(
+      roomJid: room.toString(),
+      targetId: targetId,
+      byJid: byJid,
+      reason: (reason != null && reason.isNotEmpty) ? reason : null,
+    );
+    for (final memberId in bubbles.memberIdsOf(bubbleId)) {
+      router.fanOut(memberId, tombstone);
+    }
+  }
+
+  /// Builds an XEP-0425 `<moderated>` tombstone message (read by xmpp-web
+  /// via the `urn:xmpp:fasten:0` / `message-moderate:0` filters).
+  String _moderationTombstone({
+    required String roomJid,
+    required String targetId,
+    required String byJid,
+    String? reason,
+    bool includeClientNs = true,
+  }) {
+    final reasonXml = reason != null ? '<reason>${_esc(reason)}</reason>' : '';
+    final ns = includeClientNs ? ' xmlns="${Ns.client}"' : '';
+    return '<message$ns type="groupchat" from="${_esc(roomJid)}" '
+        'id="${_esc(DateTime.now().microsecondsSinceEpoch.toRadixString(16))}">'
+        '<apply-to xmlns="${Ns.fasten}" id="${_esc(targetId)}">'
+        '<moderated xmlns="${Ns.moderate0}" by="${_esc(byJid)}">'
+        '<retract xmlns="${Ns.retract0}"/>'
+        '$reasonXml'
+        '</moderated></apply-to></message>';
+  }
+
+  void _sendIqError(
+    String id,
+    String errType,
+    String condition, {
+    String? from,
+  }) {
+    final fromAttr = from != null ? ' from="${_esc(from)}"' : '';
+    send(
+      '<iq type="error" id="${_esc(id)}"$fromAttr>'
+      '<error type="${_esc(errType)}">'
+      '<$condition xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+      '</error></iq>',
+    );
+  }
+
   String _wrapSentCarbon(String innerMessageStanza) {
     return '<message from="${_esc(_jid.bare.toString())}" '
         'to="${_esc(_jid.toString())}" type="chat">'
@@ -1191,7 +1589,7 @@ class XmppWsSession implements XmppSession {
     final stanzaId =
         el.getAttribute('id') ??
         DateTime.now().microsecondsSinceEpoch.toRadixString(16);
-    if (body != null) {
+    if (body != null && !_hasNoStore(el)) {
       final thread = el.getElement('thread')?.innerText.trim();
       final subject = el.getElement('subject')?.innerText.trim();
       bubbles.insertMessage(
@@ -1203,7 +1601,7 @@ class XmppWsSession implements XmppSession {
         subject: (subject != null && subject.isNotEmpty) ? subject : null,
       );
     }
-    final forwarded = _rewriteFrom(el, id: stanzaId);
+    final forwarded = _rewriteFromStamped(el, id: stanzaId, by: to.toString());
     for (final m in bubbles.membersOf(bubbleId)) {
       if (m.status != 'accepted') continue;
       router.fanOut(m.userId, forwarded);
@@ -1217,6 +1615,32 @@ class XmppWsSession implements XmppSession {
     if (id != null) copy.setAttribute('id', id);
     return copy.toXmlString();
   }
+
+  /// Like [_rewriteFrom] but also stamps an XEP-0359 `<stanza-id>` so the
+  /// client can dedupe/anchor on the server-assigned id.
+  String _rewriteFromStamped(
+    XmlElement el, {
+    required String id,
+    required String by,
+  }) {
+    final copy = el.copy();
+    copy.setAttribute('xmlns', Ns.client);
+    copy.setAttribute('from', _jid.toString());
+    copy.setAttribute('id', id);
+    copy.children.add(
+      XmlElement(XmlName('stanza-id'), [
+        XmlAttribute(XmlName('xmlns'), Ns.uniqueId),
+        XmlAttribute(XmlName('id'), id),
+        XmlAttribute(XmlName('by'), by),
+      ]),
+    );
+    return copy.toXmlString();
+  }
+
+  /// XEP-0334 `<no-store>` hint — the sender asks us not to archive.
+  bool _hasNoStore(XmlElement el) => el.children.whereType<XmlElement>().any(
+    (e) => e.name.namespaceUri == Ns.hints && e.localName == 'no-store',
+  );
 
   void _handlePresence(XmlElement el) {
     if (_state != _State.bound) return;
@@ -1246,13 +1670,13 @@ class XmppWsSession implements XmppSession {
     }
 
     if (typeAttr == 'unavailable') {
-      presence.set(_userId, 'offline');
+      _persistPresence('offline');
       _fanOutPresenceAvailability(unavailable: true);
       return;
     }
     final show = el.getElement('show')?.innerText.trim() ?? 'online';
     final status = el.getElement('status')?.innerText;
-    presence.set(_userId, show, status: status);
+    _persistPresence(show, status: status);
     _fanOutPresenceAvailability(show: show, status: status);
 
     // Initial <presence/> from client — deliver each roster contact's known
@@ -1310,20 +1734,51 @@ class XmppWsSession implements XmppSession {
 
   void _handleMucPresence(XmlElement el, Jid to, String? type) {
     final bubbleId = to.local;
-    final bubble = bubbles.findById(bubbleId);
-    if (bubble == null) return;
-    final me = bubbles.memberOf(bubbleId, _userId);
-    if (me == null) return;
+    var bubble = bubbles.findById(bubbleId);
 
     if (type == 'unavailable') {
-      // Best-effort: forward to occupants; membership stays intact.
-      final leaveStanza =
-          '<presence type="unavailable" from="${_esc(to.toString())}" '
-          'to="${_esc(_jid.toString())}"/>';
-      send(leaveStanza);
+      // Best-effort leave: forward self-unavailable; membership stays intact.
+      send(
+        '<presence type="unavailable" from="${_esc(to.toString())}" '
+        'to="${_esc(_jid.toString())}"/>',
+      );
       return;
     }
-    // Deliver occupant list back to the joiner.
+
+    // XEP-0045 room creation: joining a non-existent room makes the joiner
+    // its owner. Guests cannot create rooms.
+    var created = false;
+    if (bubble == null) {
+      if (_isAnonymous) {
+        _sendMucPresenceError(to, 'cancel', 'item-not-found');
+        return;
+      }
+      bubble = bubbles.createWithId(
+        id: bubbleId,
+        ownerId: _userId,
+        name: bubbleId,
+      );
+      created = true;
+    }
+
+    var me = bubbles.memberOf(bubbleId, _userId);
+    if (me == null) {
+      // Open join: a registered non-member may join a public room and is
+      // enrolled as an accepted member. Members-only rooms and guests
+      // (no user row to reference) are refused.
+      if (bubble.visibility != 'public' || _isAnonymous) {
+        _sendMucPresenceError(to, 'auth', 'registration-required');
+        return;
+      }
+      me = bubbles.addMember(
+        bubbleId,
+        _userId,
+        role: 'user',
+        status: 'accepted',
+      );
+    }
+
+    // Deliver the occupant list to the joiner.
     for (final m in bubbles.membersOf(bubbleId)) {
       if (m.status != 'accepted') continue;
       final occJid = '${bubble.id}@${Ns.mucPrefix}$domain/${m.userId}';
@@ -1335,16 +1790,145 @@ class XmppWsSession implements XmppSession {
         '</x></presence>',
       );
     }
-    // Confirm the self-join.
+    // Confirm the self-join (110), flagging a freshly created room (201).
+    final selfOccJid = '${bubble.id}@${Ns.mucPrefix}$domain/$_userId';
     send(
-      '<presence from="${_esc('${bubble.id}@${Ns.mucPrefix}$domain/$_userId')}" '
-      'to="${_esc(_jid.toString())}">'
+      '<presence from="${_esc(selfOccJid)}" to="${_esc(_jid.toString())}">'
       '<x xmlns="${Ns.mucUser}">'
       '<item affiliation="${_esc(me.role == 'owner' ? 'owner' : 'member')}" '
       'role="participant" jid="${_esc(_jid.toString())}"/>'
       '<status code="110"/>'
+      '${created ? '<status code="201"/>' : ''}'
       '</x></presence>',
     );
+    // Announce the new occupant to the other accepted members.
+    final joinBroadcast =
+        '<presence xmlns="${Ns.client}" from="${_esc(selfOccJid)}">'
+        '<x xmlns="${Ns.mucUser}">'
+        '<item affiliation="${_esc(me.role == 'owner' ? 'owner' : 'member')}" '
+        'role="participant" jid="${_esc(_jid.toString())}"/>'
+        '</x></presence>';
+    for (final m in bubbles.membersOf(bubbleId)) {
+      if (m.status != 'accepted' || m.userId == _userId) continue;
+      router.fanOut(m.userId, joinBroadcast);
+    }
+
+    // XEP-0045 §7.2.14: deliver the current room subject to the joiner.
+    final subject = bubble.topic;
+    if (subject != null && subject.isNotEmpty) {
+      send(
+        '<message type="groupchat" '
+        'from="${_esc('${bubble.id}@${Ns.mucPrefix}$domain/${bubble.ownerId}')}" '
+        'to="${_esc(_jid.toString())}">'
+        '<subject>${_esc(subject)}</subject></message>',
+      );
+    }
+  }
+
+  void _sendMucPresenceError(Jid to, String errType, String condition) {
+    send(
+      '<presence type="error" from="${_esc(to.toString())}" '
+      'to="${_esc(_jid.toString())}">'
+      '<error type="${_esc(errType)}">'
+      '<$condition xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+      '</error></presence>',
+    );
+  }
+
+  /// XEP-0045 muc#owner. `get` returns the config form; `set` applies it
+  /// (owner only). Room name ↔ bubble name, room description ↔ topic
+  /// (also used as the delivered subject), members-only ↔ visibility.
+  void _handleMucOwner(String id, String type, String? toAttr, XmlElement q) {
+    if (toAttr == null) {
+      send(
+        '<iq type="error" id="${_esc(id)}"><error type="modify">'
+        '<bad-request xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+    final roomJid = Jid.parse(toAttr);
+    final bubble = bubbles.findById(roomJid.local);
+    if (bubble == null) {
+      send(
+        '<iq type="error" id="${_esc(id)}" from="${_esc(toAttr)}">'
+        '<error type="cancel">'
+        '<item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+    final me = bubbles.memberOf(bubble.id, _userId);
+    if (bubble.ownerId != _userId && me?.role != 'owner') {
+      send(
+        '<iq type="error" id="${_esc(id)}" from="${_esc(toAttr)}">'
+        '<error type="auth">'
+        '<forbidden xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+
+    if (type == 'get') {
+      final membersOnly = bubble.visibility != 'public';
+      send(
+        '<iq type="result" id="${_esc(id)}" from="${_esc(toAttr)}" '
+        'to="${_esc(_jid.toString())}">'
+        '<query xmlns="${Ns.mucOwner}">'
+        '<x xmlns="${Ns.dataForm}" type="form">'
+        '<title>Configuration for ${_esc(bubble.name)}</title>'
+        '<field var="FORM_TYPE" type="hidden">'
+        '<value>http://jabber.org/protocol/muc#roomconfig</value></field>'
+        '<field var="muc#roomconfig_roomname" type="text-single" '
+        'label="Room name"><value>${_esc(bubble.name)}</value></field>'
+        '<field var="muc#roomconfig_roomdesc" type="text-single" '
+        'label="Description">'
+        '<value>${_esc(bubble.topic ?? '')}</value></field>'
+        '<field var="muc#roomconfig_membersonly" type="boolean" '
+        'label="Members only"><value>${membersOnly ? '1' : '0'}</value></field>'
+        '<field var="muc#roomconfig_persistentroom" type="boolean" '
+        'label="Persistent"><value>1</value></field>'
+        '</x></query></iq>',
+      );
+      return;
+    }
+
+    // set — apply the submitted form.
+    final form = q.getElement('x', namespace: Ns.dataForm);
+    final fields = <String, String>{};
+    if (form != null) {
+      for (final f in form.findElements('field')) {
+        final v = f.getAttribute('var');
+        if (v == null) continue;
+        fields[v] = f.getElement('value')?.innerText.trim() ?? '';
+      }
+    }
+    final newName = fields['muc#roomconfig_roomname'];
+    final newDesc = fields['muc#roomconfig_roomdesc'];
+    final membersOnly = fields['muc#roomconfig_membersonly'];
+    final visibility = membersOnly == null
+        ? null
+        : (membersOnly == '1' || membersOnly == 'true' ? 'private' : 'public');
+    final updated = bubbles.update(
+      bubble.id,
+      name: (newName != null && newName.isNotEmpty) ? newName : null,
+      topic: newDesc,
+      visibility: visibility,
+    );
+    send('<iq type="result" id="${_esc(id)}" from="${_esc(toAttr)}"/>');
+
+    // Broadcast the (possibly changed) subject to occupants.
+    final subject = updated.topic;
+    if (subject != null && subject.isNotEmpty) {
+      final subjStanza =
+          '<message xmlns="${Ns.client}" type="groupchat" '
+          'from="${_esc('${updated.id}@${Ns.mucPrefix}$domain/$_userId')}">'
+          '<subject>${_esc(subject)}</subject></message>';
+      for (final m in bubbles.membersOf(updated.id)) {
+        if (m.status != 'accepted') continue;
+        router.fanOut(m.userId, subjStanza);
+      }
+    }
   }
 
   void _sendRosterPresencesTo(XmppSession target) {

@@ -66,6 +66,26 @@ class MetricsConfig {
   final String path;
 }
 
+/// SASL ANONYMOUS (RFC 4505) guest access. When [enabled], the XMPP
+/// stream advertises the ANONYMOUS mechanism and mints an ephemeral JID
+/// on [host] (falls back to the server domain when null).
+class AnonymousConfig {
+  const AnonymousConfig({this.enabled = false, this.host});
+  final bool enabled;
+  final String? host;
+}
+
+/// XEP-0363 HTTP File Upload. [maxFileSizeBytes] is advertised in the
+/// upload service's disco#info data form and enforced on slot requests.
+class HttpUploadConfig {
+  const HttpUploadConfig({
+    this.enabled = true,
+    this.maxFileSizeBytes = 10485760, // 10 MiB
+  });
+  final bool enabled;
+  final int maxFileSizeBytes;
+}
+
 class Config {
   Config({
     required this.host,
@@ -81,6 +101,8 @@ class Config {
     this.tls = const TlsConfig(),
     this.logs = const LogsConfig(),
     this.metrics = const MetricsConfig(),
+    this.anonymous = const AnonymousConfig(),
+    this.httpUpload = const HttpUploadConfig(),
     this.sip = SipConfig.disabled,
   });
 
@@ -97,10 +119,19 @@ class Config {
   final TlsConfig tls;
   final LogsConfig logs;
   final MetricsConfig metrics;
+  final AnonymousConfig anonymous;
+  final HttpUploadConfig httpUpload;
   final SipConfig sip;
 
   /// XMPP domain the server presents to clients.
   String get xmppDomain => publicHost;
+
+  /// Absolute base URL clients use to reach this server over HTTP(S).
+  /// Used to build XEP-0363 PUT/GET slot URLs.
+  String get publicBaseUrl {
+    final scheme = tls.enabled ? 'https' : 'http';
+    return '$scheme://$publicHost:$port';
+  }
 
   static Future<Config> load(String path) async {
     final file = File(path);
@@ -113,6 +144,8 @@ class Config {
     final tlsMap = raw['tls'] as YamlMap?;
     final logsMap = raw['logs'] as YamlMap?;
     final metricsMap = raw['metrics'] as YamlMap?;
+    final anonMap = raw['anonymous'] as YamlMap?;
+    final uploadMap = raw['httpUpload'] as YamlMap?;
     final sipMap = raw['sip'] as YamlMap?;
     return Config(
       host: raw['host'] as String,
@@ -153,6 +186,19 @@ class Config {
           : MetricsConfig(
               enabled: metricsMap['enabled'] as bool? ?? true,
               path: metricsMap['path'] as String? ?? '/metrics',
+            ),
+      anonymous: anonMap == null
+          ? const AnonymousConfig()
+          : AnonymousConfig(
+              enabled: anonMap['enabled'] as bool? ?? false,
+              host: anonMap['host'] as String?,
+            ),
+      httpUpload: uploadMap == null
+          ? const HttpUploadConfig()
+          : HttpUploadConfig(
+              enabled: uploadMap['enabled'] as bool? ?? true,
+              maxFileSizeBytes:
+                  uploadMap['maxFileSizeBytes'] as int? ?? 10485760,
             ),
       sip: sipMap == null ? SipConfig.disabled : _parseSip(sipMap),
     );

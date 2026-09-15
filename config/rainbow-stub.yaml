@@ -39,3 +39,13 @@ logs:
 metrics:
   enabled: true
   path: /metrics                 # Prometheus text-format exposition
+
+anonymous:
+  # SASL ANONYMOUS (RFC 4505) guest access for xmpp-web's /guest flow.
+  enabled: false
+  host: null                     # anon vhost for guest JIDs; null = publicHost
+
+httpUpload:
+  # XEP-0363 HTTP File Upload slot service.
+  enabled: true
+  maxFileSizeBytes: 10485760     # 10 MiB
