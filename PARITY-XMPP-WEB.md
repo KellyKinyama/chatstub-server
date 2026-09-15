@@ -31,8 +31,8 @@ uses in its Vue components, vs. what the stub answers today.
 | **Registered login** | SASL PLAIN | ✅ | — |
 | **Guest / anonymous join** | SASL ANONYMOUS (RFC 4505) | ✅ | **A1** |
 | **vCard / avatar edit** | XEP-0054 `vcard-temp` | ✅ | **A2** |
-| **File sharing** | XEP-0363 `http:upload:0` | 🟡 REST only | **A3** |
-| OOB url in message | XEP-0066 `jabber:x:oob` | 🟡 forwarded | **A3** |
+| **File sharing** | XEP-0363 `http:upload:0` | ✅ | **A3** |
+| OOB url in message | XEP-0066 `jabber:x:oob` | ✅ forwarded | — |
 | **Bookmarked rooms** | XEP-0048 / 0049 `storage:bookmarks` | ⬜ | **B1** |
 | **Room create / config** | XEP-0045 `muc#owner` + XEP-0004 forms | 🟡 join only | **B2** |
 | MUC self-ping / request voice | `muc#request` | ⬜ | **B2** |
@@ -105,7 +105,21 @@ uses in its Vue components, vs. what the stub answers today.
   `test/xmpp_vcard_test.dart`.
 - **Depends on:** nothing.
 
-### A3 · XEP-0363 HTTP File Upload (L) — 🟡
+### A3 · XEP-0363 HTTP File Upload (L) — ✅
+
+- **Landed** on `feat/xmpp-web-parity`: the main domain's disco#info now
+  advertises `urn:xmpp:http:upload:0` plus a `max-file-size` data form
+  (so the client's `getMaxFileSize()` finds it without a separate
+  component). A `<request>` IQ mints an unguessable token and returns
+  `<slot>` PUT/GET URLs built from `config.publicBaseUrl`; oversize
+  requests get `<file-too-large>`. New `HttpUploadService` +
+  `/upload/<token>` PUT/GET routes (token is the capability, CORS via
+  the existing middleware). Config: `httpUpload.enabled` /
+  `httpUpload.maxFileSizeBytes`. Tests: `test/xmpp_http_upload_test.dart`
+  (4 cases, green).
+- **Deploy note:** `publicBaseUrl` = `<scheme>://<publicHost>:<port>`;
+  behind a reverse proxy set `publicHost`/`port` (or front it) so the
+  slot URLs are reachable by the browser.
 
 - **What:** Advertise an upload component in `disco#items` +
   `disco#info` (`urn:xmpp:http:upload:0` with `max-file-size`), answer
@@ -227,7 +241,7 @@ uses in its Vue components, vs. what the stub answers today.
 
 1. **A1** (guest access) — ✅ done.
 2. **A2** (vCard) — ✅ done.
-3. **A3** (HTTP upload) — highest-value visible feature; reuses storage.
+3. **A3** (HTTP upload) — ✅ done.
 4. **B1** (bookmarks) — small, makes the rooms list persist.
 5. **B2** (MUC owner) — larger; prerequisite for moderation.
 6. **C1** (moderation) → **C2** (stanza-id/hints) → **C3** (autodiscovery, opt).
