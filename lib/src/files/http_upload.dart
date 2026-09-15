@@ -10,7 +10,11 @@ class FileTooLargeException implements Exception {
 }
 
 class _Slot {
-  _Slot({required this.filename, required this.contentType, required this.size});
+  _Slot({
+    required this.filename,
+    required this.contentType,
+    required this.size,
+  });
   final String filename;
   final String contentType;
   final int size;

@@ -78,10 +78,7 @@ void main() {
     await channel.ready;
     final c = _Xmpp(channel);
     await c.openStream();
-    await c.saslPlain(
-      email: 'alice@rainbow-stub.local',
-      password: aliceToken,
-    );
+    await c.saslPlain(email: 'alice@rainbow-stub.local', password: aliceToken);
     await c.openStream();
     await c.bind('phone');
     return c;
@@ -105,7 +102,7 @@ void main() {
     final alice = await connectPlain();
     final resp = await alice.iq(
       '<iq type="get" id="b0"><query xmlns="$_privateNs">'
-      '<storage xmlns="$_bookmarksNs"/></query></iq>',
+          '<storage xmlns="$_bookmarksNs"/></query></iq>',
       'b0',
     );
     final storage = resp
@@ -119,11 +116,11 @@ void main() {
     final alice = await connectPlain();
     await alice.iq(
       '<iq type="set" id="b1"><query xmlns="$_privateNs">'
-      '<storage xmlns="$_bookmarksNs">'
-      '<conference jid="team@muc.$_domain" autojoin="true" name="Team">'
-      '<nick>ali</nick></conference>'
-      '<conference jid="vip@muc.$_domain" autojoin="false" name="VIP"/>'
-      '</storage></query></iq>',
+          '<storage xmlns="$_bookmarksNs">'
+          '<conference jid="team@muc.$_domain" autojoin="true" name="Team">'
+          '<nick>ali</nick></conference>'
+          '<conference jid="vip@muc.$_domain" autojoin="false" name="VIP"/>'
+          '</storage></query></iq>',
       'b1',
     );
 
@@ -131,7 +128,7 @@ void main() {
     final alice2 = await connectPlain();
     final resp = await alice2.iq(
       '<iq type="get" id="b2"><query xmlns="$_privateNs">'
-      '<storage xmlns="$_bookmarksNs"/></query></iq>',
+          '<storage xmlns="$_bookmarksNs"/></query></iq>',
       'b2',
     );
     final confs = resp
@@ -154,21 +151,21 @@ void main() {
     final alice = await connectPlain();
     await alice.iq(
       '<iq type="set" id="c1"><query xmlns="$_privateNs">'
-      '<storage xmlns="$_bookmarksNs">'
-      '<conference jid="old@muc.$_domain" autojoin="true" name="Old"/>'
-      '</storage></query></iq>',
+          '<storage xmlns="$_bookmarksNs">'
+          '<conference jid="old@muc.$_domain" autojoin="true" name="Old"/>'
+          '</storage></query></iq>',
       'c1',
     );
     await alice.iq(
       '<iq type="set" id="c2"><query xmlns="$_privateNs">'
-      '<storage xmlns="$_bookmarksNs">'
-      '<conference jid="new@muc.$_domain" autojoin="true" name="New"/>'
-      '</storage></query></iq>',
+          '<storage xmlns="$_bookmarksNs">'
+          '<conference jid="new@muc.$_domain" autojoin="true" name="New"/>'
+          '</storage></query></iq>',
       'c2',
     );
     final resp = await alice.iq(
       '<iq type="get" id="c3"><query xmlns="$_privateNs">'
-      '<storage xmlns="$_bookmarksNs"/></query></iq>',
+          '<storage xmlns="$_bookmarksNs"/></query></iq>',
       'c3',
     );
     final confs = resp
@@ -185,9 +182,9 @@ void main() {
     final guest = await connectAnonymous();
     final resp = await guest.iq(
       '<iq type="set" id="g1"><query xmlns="$_privateNs">'
-      '<storage xmlns="$_bookmarksNs">'
-      '<conference jid="x@muc.$_domain" autojoin="true" name="X"/>'
-      '</storage></query></iq>',
+          '<storage xmlns="$_bookmarksNs">'
+          '<conference jid="x@muc.$_domain" autojoin="true" name="X"/>'
+          '</storage></query></iq>',
       'g1',
     );
     expect(resp.getAttribute('type'), 'error');

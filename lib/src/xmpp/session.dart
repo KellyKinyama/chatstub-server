@@ -1601,11 +1601,7 @@ class XmppWsSession implements XmppSession {
         subject: (subject != null && subject.isNotEmpty) ? subject : null,
       );
     }
-    final forwarded = _rewriteFromStamped(
-      el,
-      id: stanzaId,
-      by: to.toString(),
-    );
+    final forwarded = _rewriteFromStamped(el, id: stanzaId, by: to.toString());
     for (final m in bubbles.membersOf(bubbleId)) {
       if (m.status != 'accepted') continue;
       router.fanOut(m.userId, forwarded);

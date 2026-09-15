@@ -122,18 +122,18 @@ void main() {
 
     await alice.iq(
       '<iq type="set" id="vset1">'
-      '<vCard xmlns="$_vcardNs">'
-      '<FN>Alice In Wonderland</FN>'
-      '<NICKNAME>ali</NICKNAME>'
-      '<EMAIL><INTERNET/><USERID>ali@rainbow-stub.local</USERID></EMAIL>'
-      '<PHOTO><TYPE>image/png</TYPE><BINVAL>$photoB64</BINVAL></PHOTO>'
-      '</vCard></iq>',
+          '<vCard xmlns="$_vcardNs">'
+          '<FN>Alice In Wonderland</FN>'
+          '<NICKNAME>ali</NICKNAME>'
+          '<EMAIL><INTERNET/><USERID>ali@rainbow-stub.local</USERID></EMAIL>'
+          '<PHOTO><TYPE>image/png</TYPE><BINVAL>$photoB64</BINVAL></PHOTO>'
+          '</vCard></iq>',
       'vset1',
     );
 
     final resp = await bob.iq(
       '<iq type="get" id="vget1" to="$aliceId@$_domain">'
-      '<vCard xmlns="$_vcardNs"/></iq>',
+          '<vCard xmlns="$_vcardNs"/></iq>',
       'vget1',
     );
     final card = resp.getElement('vCard', namespace: _vcardNs)!;
@@ -151,27 +151,33 @@ void main() {
     await bob.close();
   });
 
-  test('get with no stored vCard synthesizes FN from the user record',
-      () async {
-    final bob = await connect(
-      email: 'bob@rainbow-stub.local',
-      token: bobToken,
-      resource: 'web',
-    );
-    final resp = await bob.iq(
-      '<iq type="get" id="vget2" to="$aliceId@$_domain">'
-      '<vCard xmlns="$_vcardNs"/></iq>',
-      'vget2',
-    );
-    final card = resp.getElement('vCard', namespace: _vcardNs)!;
-    expect(card.getElement('FN')?.innerText, 'Alice Sample');
-    expect(card.getElement('PHOTO'), isNull);
-    await bob.close();
-  });
+  test(
+    'get with no stored vCard synthesizes FN from the user record',
+    () async {
+      final bob = await connect(
+        email: 'bob@rainbow-stub.local',
+        token: bobToken,
+        resource: 'web',
+      );
+      final resp = await bob.iq(
+        '<iq type="get" id="vget2" to="$aliceId@$_domain">'
+            '<vCard xmlns="$_vcardNs"/></iq>',
+        'vget2',
+      );
+      final card = resp.getElement('vCard', namespace: _vcardNs)!;
+      expect(card.getElement('FN')?.innerText, 'Alice Sample');
+      expect(card.getElement('PHOTO'), isNull);
+      await bob.close();
+    },
+  );
 
   test('avatar written via the store surfaces as the vCard PHOTO', () async {
     // Simulates the REST avatar upload path writing to the shared store.
-    app.avatars.writeSync(aliceId, Uint8List.fromList([9, 8, 7, 6]), 'image/jpeg');
+    app.avatars.writeSync(
+      aliceId,
+      Uint8List.fromList([9, 8, 7, 6]),
+      'image/jpeg',
+    );
 
     final alice = await connect(
       email: 'alice@rainbow-stub.local',
@@ -186,10 +192,7 @@ void main() {
         .getElement('vCard', namespace: _vcardNs)!
         .getElement('PHOTO')!;
     expect(photo.getElement('TYPE')?.innerText, 'image/jpeg');
-    expect(
-      photo.getElement('BINVAL')?.innerText,
-      base64.encode([9, 8, 7, 6]),
-    );
+    expect(photo.getElement('BINVAL')?.innerText, base64.encode([9, 8, 7, 6]));
     await alice.close();
   });
 
@@ -240,7 +243,7 @@ void main() {
 
     final resp = await guest.iq(
       '<iq type="set" id="vset-anon">'
-      '<vCard xmlns="$_vcardNs"><FN>Nope</FN></vCard></iq>',
+          '<vCard xmlns="$_vcardNs"><FN>Nope</FN></vCard></iq>',
       'vset-anon',
     );
     expect(resp.getAttribute('type'), 'error');

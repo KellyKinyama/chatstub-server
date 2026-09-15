@@ -26,7 +26,9 @@ void main() {
   late String bobToken;
 
   setUp(() async {
-    final tempDir = Directory.systemTemp.createTempSync('rainbow-stub-mucowner');
+    final tempDir = Directory.systemTemp.createTempSync(
+      'rainbow-stub-mucowner',
+    );
     final config = Config(
       host: '127.0.0.1',
       port: 0,
@@ -107,33 +109,35 @@ void main() {
     return c;
   }
 
-  test('joining a non-existent room creates it with the joiner as owner',
-      () async {
-    final alice = await connect(
-      email: 'alice@rainbow-stub.local',
-      token: aliceToken,
-      resource: 'phone',
-    );
-    final selfP = alice.awaitSelfPresence();
-    alice.send(
-      '<presence to="team@muc.$_domain/$aliceId">'
-      '<x xmlns="$_mucNs"/></presence>',
-    );
-    final p = await selfP;
-    final x = p.getElement('x', namespace: _mucUserNs)!;
-    final codes = x
-        .findElements('status')
-        .map((s) => s.getAttribute('code'))
-        .toList();
-    expect(codes, contains('110'));
-    expect(codes, contains('201')); // freshly created
+  test(
+    'joining a non-existent room creates it with the joiner as owner',
+    () async {
+      final alice = await connect(
+        email: 'alice@rainbow-stub.local',
+        token: aliceToken,
+        resource: 'phone',
+      );
+      final selfP = alice.awaitSelfPresence();
+      alice.send(
+        '<presence to="team@muc.$_domain/$aliceId">'
+        '<x xmlns="$_mucNs"/></presence>',
+      );
+      final p = await selfP;
+      final x = p.getElement('x', namespace: _mucUserNs)!;
+      final codes = x
+          .findElements('status')
+          .map((s) => s.getAttribute('code'))
+          .toList();
+      expect(codes, contains('110'));
+      expect(codes, contains('201')); // freshly created
 
-    final room = app.bubbles.findById('team');
-    expect(room, isNotNull);
-    expect(room!.ownerId, aliceId);
-    expect(app.bubbles.memberOf('team', aliceId)?.role, 'owner');
-    await alice.close();
-  });
+      final room = app.bubbles.findById('team');
+      expect(room, isNotNull);
+      expect(room!.ownerId, aliceId);
+      expect(app.bubbles.memberOf('team', aliceId)?.role, 'owner');
+      await alice.close();
+    },
+  );
 
   test('owner get returns a muc#roomconfig form', () async {
     app.bubbles.createWithId(id: 'team', ownerId: aliceId, name: 'Team');
@@ -144,7 +148,7 @@ void main() {
     );
     final resp = await alice.iq(
       '<iq type="get" id="cfg1" to="team@muc.$_domain">'
-      '<query xmlns="$_mucOwnerNs"/></iq>',
+          '<query xmlns="$_mucOwnerNs"/></iq>',
       'cfg1',
     );
     final form = resp
@@ -169,12 +173,12 @@ void main() {
     );
     await alice.iq(
       '<iq type="set" id="cfg2" to="team@muc.$_domain">'
-      '<query xmlns="$_mucOwnerNs">'
-      '<x xmlns="$_formNs" type="submit">'
-      '<field var="muc#roomconfig_roomname"><value>Team Room</value></field>'
-      '<field var="muc#roomconfig_roomdesc"><value>Daily standup</value></field>'
-      '<field var="muc#roomconfig_membersonly"><value>0</value></field>'
-      '</x></query></iq>',
+          '<query xmlns="$_mucOwnerNs">'
+          '<x xmlns="$_formNs" type="submit">'
+          '<field var="muc#roomconfig_roomname"><value>Team Room</value></field>'
+          '<field var="muc#roomconfig_roomdesc"><value>Daily standup</value></field>'
+          '<field var="muc#roomconfig_membersonly"><value>0</value></field>'
+          '</x></query></iq>',
       'cfg2',
     );
     final room = app.bubbles.findById('team')!;
@@ -219,10 +223,10 @@ void main() {
     );
     final resp = await bob.iq(
       '<iq type="set" id="cfg3" to="team@muc.$_domain">'
-      '<query xmlns="$_mucOwnerNs">'
-      '<x xmlns="$_formNs" type="submit">'
-      '<field var="muc#roomconfig_roomname"><value>Hijack</value></field>'
-      '</x></query></iq>',
+          '<query xmlns="$_mucOwnerNs">'
+          '<x xmlns="$_formNs" type="submit">'
+          '<field var="muc#roomconfig_roomname"><value>Hijack</value></field>'
+          '</x></query></iq>',
       'cfg3',
     );
     expect(resp.getAttribute('type'), 'error');
@@ -267,14 +271,16 @@ class _Xmpp {
     return ready.timeout(const Duration(seconds: 3));
   }
 
-  Future<XmlElement> awaitSelfPresence() => stream.firstWhere((e) {
+  Future<XmlElement> awaitSelfPresence() => stream
+      .firstWhere((e) {
         if (e.localName != 'presence') return false;
         final x = e.getElement('x', namespace: _mucUserNs);
         if (x == null) return false;
         return x
             .findElements('status')
             .any((s) => s.getAttribute('code') == '110');
-      }).timeout(const Duration(seconds: 3));
+      })
+      .timeout(const Duration(seconds: 3));
 
   Future<void> openStream() async {
     final ready = stream.firstWhere(

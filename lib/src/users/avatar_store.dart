@@ -93,12 +93,7 @@ class AvatarStore {
         byte_size = excluded.byte_size,
         updated_at = excluded.updated_at
       ''',
-      [
-        userId,
-        mimeType,
-        byteSize,
-        DateTime.now().toUtc().toIso8601String(),
-      ],
+      [userId, mimeType, byteSize, DateTime.now().toUtc().toIso8601String()],
     );
   }
 

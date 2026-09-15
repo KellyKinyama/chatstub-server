@@ -77,10 +77,7 @@ void main() {
     await channel.ready;
     final c = _Xmpp(channel);
     await c.openStream();
-    await c.saslPlain(
-      email: 'alice@rainbow-stub.local',
-      password: aliceToken,
-    );
+    await c.saslPlain(email: 'alice@rainbow-stub.local', password: aliceToken);
     await c.openStream();
     await c.bind('phone');
     return c;
@@ -93,12 +90,11 @@ void main() {
     return Uri.parse('http://$host:$port${u.path}');
   }
 
-  test('disco#info advertises http:upload with a max-file-size form',
-      () async {
+  test('disco#info advertises http:upload with a max-file-size form', () async {
     final alice = await connect();
     final resp = await alice.iq(
       '<iq type="get" id="d1" to="$_domain">'
-      '<query xmlns="http://jabber.org/protocol/disco#info"/></iq>',
+          '<query xmlns="http://jabber.org/protocol/disco#info"/></iq>',
       'd1',
     );
     final query = resp.getElement('query')!;
@@ -120,8 +116,8 @@ void main() {
     final bytes = utf8.encode('hello upload');
     final resp = await alice.iq(
       '<iq type="get" id="s1">'
-      '<request xmlns="$_uploadNs" filename="note.txt" '
-      'size="${bytes.length}" content-type="text/plain"/></iq>',
+          '<request xmlns="$_uploadNs" filename="note.txt" '
+          'size="${bytes.length}" content-type="text/plain"/></iq>',
       's1',
     );
     final slot = resp.getElement('slot', namespace: _uploadNs)!;
@@ -141,10 +137,7 @@ void main() {
     final getResp = await get.close();
     expect(getResp.statusCode, 200);
     expect(getResp.headers.contentType?.mimeType, 'text/plain');
-    final got = await getResp.fold<List<int>>(
-      <int>[],
-      (a, b) => a..addAll(b),
-    );
+    final got = await getResp.fold<List<int>>(<int>[], (a, b) => a..addAll(b));
     expect(utf8.decode(got), 'hello upload');
     client.close();
     await alice.close();
@@ -154,8 +147,8 @@ void main() {
     final alice = await connect();
     final resp = await alice.iq(
       '<iq type="get" id="s2">'
-      '<request xmlns="$_uploadNs" filename="big.bin" '
-      'size="99999" content-type="application/octet-stream"/></iq>',
+          '<request xmlns="$_uploadNs" filename="big.bin" '
+          'size="99999" content-type="application/octet-stream"/></iq>',
       's2',
     );
     expect(resp.getAttribute('type'), 'error');

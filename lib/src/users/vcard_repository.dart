@@ -40,13 +40,7 @@ class VcardRepository {
         email = excluded.email,
         updated_at = excluded.updated_at
       ''',
-      [
-        userId,
-        fn,
-        nickname,
-        email,
-        DateTime.now().toUtc().toIso8601String(),
-      ],
+      [userId, fn, nickname, email, DateTime.now().toUtc().toIso8601String()],
     );
   }
 }

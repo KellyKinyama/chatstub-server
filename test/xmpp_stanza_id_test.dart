@@ -114,7 +114,7 @@ void main() {
     );
     final resp = await alice.iq(
       '<iq type="get" id="d1" to="$_domain">'
-      '<query xmlns="http://jabber.org/protocol/disco#info"/></iq>',
+          '<query xmlns="http://jabber.org/protocol/disco#info"/></iq>',
       'd1',
     );
     final feats = resp
@@ -126,61 +126,65 @@ void main() {
     await alice.close();
   });
 
-  test('a live 1:1 message carries a stanza-id stamped by the recipient',
-      () async {
-    final alice = await connect(
-      email: 'alice@rainbow-stub.local',
-      token: aliceToken,
-      resource: 'phone',
-    );
-    final bob = await connect(
-      email: 'bob@rainbow-stub.local',
-      token: bobToken,
-      resource: 'web',
-    );
-    final got = bob.awaitWhere(
-      (e) => e.localName == 'message' && e.getElement('body') != null,
-    );
-    alice.send(
-      '<message id="c1" to="$bobId@$_domain" type="chat">'
-      '<body>hi bob</body></message>',
-    );
-    final msg = await got;
-    final sid = msg.getElement('stanza-id', namespace: _sidNs)!;
-    expect(sid.getAttribute('id'), 'c1');
-    expect(sid.getAttribute('by'), '$bobId@$_domain');
-    await alice.close();
-    await bob.close();
-  });
+  test(
+    'a live 1:1 message carries a stanza-id stamped by the recipient',
+    () async {
+      final alice = await connect(
+        email: 'alice@rainbow-stub.local',
+        token: aliceToken,
+        resource: 'phone',
+      );
+      final bob = await connect(
+        email: 'bob@rainbow-stub.local',
+        token: bobToken,
+        resource: 'web',
+      );
+      final got = bob.awaitWhere(
+        (e) => e.localName == 'message' && e.getElement('body') != null,
+      );
+      alice.send(
+        '<message id="c1" to="$bobId@$_domain" type="chat">'
+        '<body>hi bob</body></message>',
+      );
+      final msg = await got;
+      final sid = msg.getElement('stanza-id', namespace: _sidNs)!;
+      expect(sid.getAttribute('id'), 'c1');
+      expect(sid.getAttribute('by'), '$bobId@$_domain');
+      await alice.close();
+      await bob.close();
+    },
+  );
 
-  test('a live groupchat message carries a stanza-id stamped by the room',
-      () async {
-    app.bubbles.createWithId(id: 'team', ownerId: aliceId, name: 'Team');
-    app.bubbles.addMember('team', bobId, role: 'user', status: 'accepted');
-    final alice = await connect(
-      email: 'alice@rainbow-stub.local',
-      token: aliceToken,
-      resource: 'phone',
-    );
-    final bob = await connect(
-      email: 'bob@rainbow-stub.local',
-      token: bobToken,
-      resource: 'web',
-    );
-    final got = bob.awaitWhere(
-      (e) => e.localName == 'message' && e.getElement('body') != null,
-    );
-    alice.send(
-      '<message id="g1" to="team@muc.$_domain" type="groupchat">'
-      '<body>hi team</body></message>',
-    );
-    final msg = await got;
-    final sid = msg.getElement('stanza-id', namespace: _sidNs)!;
-    expect(sid.getAttribute('id'), 'g1');
-    expect(sid.getAttribute('by'), 'team@muc.$_domain');
-    await alice.close();
-    await bob.close();
-  });
+  test(
+    'a live groupchat message carries a stanza-id stamped by the room',
+    () async {
+      app.bubbles.createWithId(id: 'team', ownerId: aliceId, name: 'Team');
+      app.bubbles.addMember('team', bobId, role: 'user', status: 'accepted');
+      final alice = await connect(
+        email: 'alice@rainbow-stub.local',
+        token: aliceToken,
+        resource: 'phone',
+      );
+      final bob = await connect(
+        email: 'bob@rainbow-stub.local',
+        token: bobToken,
+        resource: 'web',
+      );
+      final got = bob.awaitWhere(
+        (e) => e.localName == 'message' && e.getElement('body') != null,
+      );
+      alice.send(
+        '<message id="g1" to="team@muc.$_domain" type="groupchat">'
+        '<body>hi team</body></message>',
+      );
+      final msg = await got;
+      final sid = msg.getElement('stanza-id', namespace: _sidNs)!;
+      expect(sid.getAttribute('id'), 'g1');
+      expect(sid.getAttribute('by'), 'team@muc.$_domain');
+      await alice.close();
+      await bob.close();
+    },
+  );
 
   test('a <no-store> message is delivered but not archived', () async {
     final alice = await connect(
@@ -210,8 +214,7 @@ void main() {
     // Normal message — archived.
     final kept = bob.awaitWhere(
       (e) =>
-          e.localName == 'message' &&
-          e.getElement('body')?.innerText == 'kept',
+          e.localName == 'message' && e.getElement('body')?.innerText == 'kept',
     );
     alice.send(
       '<message id="keep1" to="$bobId@$_domain" type="chat">'
@@ -221,19 +224,21 @@ void main() {
 
     final results = await alice.mamCollect(
       '<iq type="set" id="mam1"><query xmlns="$_mamNs">'
-      '<x xmlns="jabber:x:data" type="submit">'
-      '<field var="FORM_TYPE"><value>$_mamNs</value></field>'
-      '<field var="with"><value>$bobId@$_domain</value></field>'
-      '</x></query></iq>',
+          '<x xmlns="jabber:x:data" type="submit">'
+          '<field var="FORM_TYPE"><value>$_mamNs</value></field>'
+          '<field var="with"><value>$bobId@$_domain</value></field>'
+          '</x></query></iq>',
       'mam1',
     );
     final bodies = results
-        .map((r) => r
-            .getElement('result', namespace: _mamNs)
-            ?.getElement('forwarded')
-            ?.getElement('message')
-            ?.getElement('body')
-            ?.innerText)
+        .map(
+          (r) => r
+              .getElement('result', namespace: _mamNs)
+              ?.getElement('forwarded')
+              ?.getElement('message')
+              ?.getElement('body')
+              ?.innerText,
+        )
         .whereType<String>()
         .toList();
     expect(bodies, contains('kept'));

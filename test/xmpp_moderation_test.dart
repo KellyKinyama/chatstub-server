@@ -26,7 +26,9 @@ void main() {
   late String bobToken;
 
   setUp(() async {
-    final tempDir = Directory.systemTemp.createTempSync('rainbow-stub-moderate');
+    final tempDir = Directory.systemTemp.createTempSync(
+      'rainbow-stub-moderate',
+    );
     final config = Config(
       host: '127.0.0.1',
       port: 0,
@@ -140,10 +142,10 @@ void main() {
     );
     final ack = await alice.iq(
       '<iq type="set" id="mod1" to="team@muc.$_domain">'
-      '<apply-to xmlns="$_fastenNs" id="msg1">'
-      '<moderate xmlns="$_moderateNs">'
-      '<retract xmlns="$_retract0Ns"/><reason>spam</reason>'
-      '</moderate></apply-to></iq>',
+          '<apply-to xmlns="$_fastenNs" id="msg1">'
+          '<moderate xmlns="$_moderateNs">'
+          '<retract xmlns="$_retract0Ns"/><reason>spam</reason>'
+          '</moderate></apply-to></iq>',
       'mod1',
     );
     expect(ack.getAttribute('type'), 'result');
@@ -160,8 +162,7 @@ void main() {
     await bob.close();
   });
 
-  test('a later MAM query returns the tombstone instead of the body',
-      () async {
+  test('a later MAM query returns the tombstone instead of the body', () async {
     final alice = await connect(
       email: 'alice@rainbow-stub.local',
       token: aliceToken,
@@ -178,9 +179,9 @@ void main() {
     await aliceGotMsg;
     await alice.iq(
       '<iq type="set" id="mod2" to="team@muc.$_domain">'
-      '<apply-to xmlns="$_fastenNs" id="msg2">'
-      '<moderate xmlns="$_moderateNs"><retract xmlns="$_retract0Ns"/>'
-      '<reason>cleanup</reason></moderate></apply-to></iq>',
+          '<apply-to xmlns="$_fastenNs" id="msg2">'
+          '<moderate xmlns="$_moderateNs"><retract xmlns="$_retract0Ns"/>'
+          '<reason>cleanup</reason></moderate></apply-to></iq>',
       'mod2',
     );
 
@@ -192,17 +193,19 @@ void main() {
     );
     final results = await bob.mamCollect(
       '<iq type="set" id="mam1"><query xmlns="$_mamNs">'
-      '<x xmlns="jabber:x:data" type="submit">'
-      '<field var="FORM_TYPE"><value>$_mamNs</value></field>'
-      '<field var="with"><value>team@muc.$_domain</value></field>'
-      '</x></query></iq>',
+          '<x xmlns="jabber:x:data" type="submit">'
+          '<field var="FORM_TYPE"><value>$_mamNs</value></field>'
+          '<field var="with"><value>team@muc.$_domain</value></field>'
+          '</x></query></iq>',
       'mam1',
     );
     final forwardedMsgs = results
-        .map((r) => r
-            .getElement('result', namespace: _mamNs)
-            ?.getElement('forwarded')
-            ?.getElement('message'))
+        .map(
+          (r) => r
+              .getElement('result', namespace: _mamNs)
+              ?.getElement('forwarded')
+              ?.getElement('message'),
+        )
         .whereType<XmlElement>()
         .toList();
     expect(forwardedMsgs, isNotEmpty);
@@ -236,16 +239,18 @@ void main() {
     );
     final resp = await bob.iq(
       '<iq type="set" id="mod3" to="team@muc.$_domain">'
-      '<apply-to xmlns="$_fastenNs" id="msg3">'
-      '<moderate xmlns="$_moderateNs"><retract xmlns="$_retract0Ns"/>'
-      '</moderate></apply-to></iq>',
+          '<apply-to xmlns="$_fastenNs" id="msg3">'
+          '<moderate xmlns="$_moderateNs"><retract xmlns="$_retract0Ns"/>'
+          '</moderate></apply-to></iq>',
       'mod3',
     );
     expect(resp.getAttribute('type'), 'error');
     expect(resp.getElement('error')?.getElement('forbidden'), isNotNull);
     // Message is untouched.
-    expect(app.bubbles.findMessageByStanzaId('team', 'msg3')?.body,
-        'legit message');
+    expect(
+      app.bubbles.findMessageByStanzaId('team', 'msg3')?.body,
+      'legit message',
+    );
     await alice.close();
     await bob.close();
   });
