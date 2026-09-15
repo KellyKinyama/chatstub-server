@@ -33,7 +33,7 @@ uses in its Vue components, vs. what the stub answers today.
 | **vCard / avatar edit** | XEP-0054 `vcard-temp` | ✅ | **A2** |
 | **File sharing** | XEP-0363 `http:upload:0` | ✅ | **A3** |
 | OOB url in message | XEP-0066 `jabber:x:oob` | ✅ forwarded | — |
-| **Bookmarked rooms** | XEP-0048 / 0049 `storage:bookmarks` | ⬜ | **B1** |
+| **Bookmarked rooms** | XEP-0048 / 0049 `storage:bookmarks` | ✅ | **B1** |
 | **Room create / config** | XEP-0045 `muc#owner` + XEP-0004 forms | 🟡 join only | **B2** |
 | MUC self-ping / request voice | `muc#request` | ⬜ | **B2** |
 | **Message moderation** | XEP-0425 `message-moderate:0` | ⬜ | **C1** |
@@ -149,7 +149,15 @@ uses in its Vue components, vs. what the stub answers today.
 
 ## Phase B — rooms & bookmarks
 
-### B1 · XEP-0049 private storage + XEP-0048 bookmarks (S–M) — ⬜
+### B1 · XEP-0049 private storage + XEP-0048 bookmarks (S–M) — ✅
+
+- **Landed** on `feat/xmpp-web-parity`: generic `jabber:iq:private`
+  get/set. The single child of `<query>` is keyed by its
+  `{namespace}localName` and its raw serialization is stored/returned
+  verbatim, so `storage:bookmarks` rides on top unchanged. Empty get
+  echoes the requested empty element; guests are refused a set with
+  `<forbidden/>`. New `private_storage` table + `PrivateStorageRepository`.
+  Tests: `test/xmpp_private_storage_test.dart` (4 cases, green).
 
 - **What:** Implement `jabber:iq:private` get/set as an opaque
   per-user XML blob keyed by child element qname; `storage:bookmarks`
@@ -242,7 +250,7 @@ uses in its Vue components, vs. what the stub answers today.
 1. **A1** (guest access) — ✅ done.
 2. **A2** (vCard) — ✅ done.
 3. **A3** (HTTP upload) — ✅ done.
-4. **B1** (bookmarks) — small, makes the rooms list persist.
+4. **B1** (bookmarks) — ✅ done.
 5. **B2** (MUC owner) — larger; prerequisite for moderation.
 6. **C1** (moderation) → **C2** (stanza-id/hints) → **C3** (autodiscovery, opt).
 
