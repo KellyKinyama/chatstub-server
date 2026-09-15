@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS vcards (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- XEP-0049 private XML storage (one row per user + element qname). Backs
+-- XEP-0048 bookmarks (storage:bookmarks).
+CREATE TABLE IF NOT EXISTS private_storage (
+  user_id     TEXT NOT NULL,
+  element_key TEXT NOT NULL,
+  xml         TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (user_id, element_key),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Phase 2: presence. One row per user; XMPP (phase 3) will drive live updates.
 CREATE TABLE IF NOT EXISTS presence (
   user_id      TEXT PRIMARY KEY,

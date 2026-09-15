@@ -15,6 +15,7 @@ import '../sip/sip_gateway.dart';
 import '../files/http_upload.dart';
 import '../users/avatar_store.dart';
 import '../users/presence_repository.dart';
+import '../users/private_storage_repository.dart';
 import '../users/roster_repository.dart';
 import '../users/user_repository.dart';
 import '../users/vcard_repository.dart';
@@ -54,6 +55,7 @@ class Ns {
   static const vcard = 'vcard-temp';
   static const httpUpload = 'urn:xmpp:http:upload:0';
   static const dataForm = 'jabber:x:data';
+  static const privateStorage = 'jabber:iq:private';
 }
 
 /// Server-wide registry of resumable Stream Management sessions.
@@ -153,6 +155,7 @@ class XmppWsSession implements XmppSession {
     required this.pushTokens,
     required this.avatars,
     required this.vcards,
+    required this.privateStorage,
     required this.upload,
     required this.uploadBaseUrl,
     this.allowAnonymous = false,
@@ -175,6 +178,7 @@ class XmppWsSession implements XmppSession {
   final PushTokenRepository pushTokens;
   final AvatarStore avatars;
   final VcardRepository vcards;
+  final PrivateStorageRepository privateStorage;
   final HttpUploadService upload;
   final String uploadBaseUrl;
   final bool allowAnonymous;
@@ -678,6 +682,12 @@ class XmppWsSession implements XmppSession {
       _handleVcard(id, type!, el.getAttribute('to'), vcardEl);
       return;
     }
+    // XEP-0049 private XML storage (backs XEP-0048 bookmarks).
+    final privateEl = el.getElement('query', namespace: Ns.privateStorage);
+    if (privateEl != null && (type == 'get' || type == 'set')) {
+      _handlePrivateStorage(id, type!, privateEl);
+      return;
+    }
     // XEP-0363 HTTP Upload slot request.
     final uploadReq = el.getElement('request', namespace: Ns.httpUpload);
     if (uploadReq != null && type == 'get') {
@@ -959,6 +969,55 @@ class XmppWsSession implements XmppSession {
     }
     buf.write('</vCard></iq>');
     send(buf.toString());
+  }
+
+  /// XEP-0049 private XML storage. The single child of `<query>` is keyed
+  /// by its `{namespace}localName`; `set` stores its raw serialization,
+  /// `get` returns the stored blob (or the empty requested element back).
+  void _handlePrivateStorage(String id, String type, XmlElement query) {
+    final child = query.childElements.isEmpty
+        ? null
+        : query.childElements.first;
+    if (child == null) {
+      send(
+        '<iq type="error" id="${_esc(id)}"><error type="modify">'
+        '<bad-request xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+    if (_isAnonymous) {
+      // Guests have no account to store against.
+      if (type == 'set') {
+        send(
+          '<iq type="error" id="${_esc(id)}"><error type="auth">'
+          '<forbidden xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+          '</error></iq>',
+        );
+      } else {
+        send(
+          '<iq type="result" id="${_esc(id)}">'
+          '<query xmlns="${Ns.privateStorage}">${child.toXmlString()}</query>'
+          '</iq>',
+        );
+      }
+      return;
+    }
+
+    final key = '{${child.name.namespaceUri ?? ''}}${child.name.local}';
+    if (type == 'set') {
+      privateStorage.upsert(_userId, key, child.toXmlString());
+      send('<iq type="result" id="${_esc(id)}"/>');
+      return;
+    }
+    // get
+    final stored = privateStorage.find(_userId, key);
+    send(
+      '<iq type="result" id="${_esc(id)}">'
+      '<query xmlns="${Ns.privateStorage}">'
+      '${stored ?? child.toXmlString()}'
+      '</query></iq>',
+    );
   }
 
   void _handleMamQuery(String queryId, XmlElement query) {

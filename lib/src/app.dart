@@ -30,6 +30,7 @@ import 'users/presence_repository.dart';
 import 'users/roster_repository.dart';
 import 'users/routes.dart';
 import 'users/user_repository.dart';
+import 'users/private_storage_repository.dart';
 import 'users/vcard_repository.dart';
 import 'util/errors.dart';
 import 'util/ids.dart';
@@ -46,6 +47,7 @@ class RainbowStubApp {
     required this.presence,
     required this.avatars,
     required this.vcards,
+    required this.privateStorage,
     required this.messages,
     required this.reactions,
     required this.bubbles,
@@ -69,6 +71,7 @@ class RainbowStubApp {
   final PresenceRepository presence;
   final AvatarStore avatars;
   final VcardRepository vcards;
+  final PrivateStorageRepository privateStorage;
   final MessageRepository messages;
   final ReactionRepository reactions;
   final BubbleRepository bubbles;
@@ -95,6 +98,7 @@ class RainbowStubApp {
     final presence = PresenceRepository(db);
     final avatars = AvatarStore(rootDir: config.avatarStorePath, db: db);
     final vcards = VcardRepository(db);
+    final privateStorage = PrivateStorageRepository(db);
     final messages = MessageRepository(db, ids);
     final reactions = ReactionRepository(db);
     final bubbles = BubbleRepository(db, ids);
@@ -141,6 +145,7 @@ class RainbowStubApp {
       presence: presence,
       avatars: avatars,
       vcards: vcards,
+      privateStorage: privateStorage,
       messages: messages,
       reactions: reactions,
       bubbles: bubbles,
@@ -173,6 +178,7 @@ class RainbowStubApp {
       pushTokens: pushTokens,
       avatars: avatars,
       vcards: vcards,
+      privateStorage: privateStorage,
       upload: upload,
       uploadBaseUrl: config.publicBaseUrl,
       allowAnonymous: config.anonymous.enabled,

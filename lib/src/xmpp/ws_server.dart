@@ -11,6 +11,7 @@ import '../push/push_token_repository.dart';
 import '../sip/sip_gateway.dart';
 import '../users/avatar_store.dart';
 import '../users/presence_repository.dart';
+import '../users/private_storage_repository.dart';
 import '../users/roster_repository.dart';
 import '../users/user_repository.dart';
 import '../users/vcard_repository.dart';
@@ -33,6 +34,7 @@ Handler xmppWebSocketHandler({
   required PushTokenRepository pushTokens,
   required AvatarStore avatars,
   required VcardRepository vcards,
+  required PrivateStorageRepository privateStorage,
   required HttpUploadService upload,
   required String uploadBaseUrl,
   bool allowAnonymous = false,
@@ -56,6 +58,7 @@ Handler xmppWebSocketHandler({
       pushTokens: pushTokens,
       avatars: avatars,
       vcards: vcards,
+      privateStorage: privateStorage,
       upload: upload,
       uploadBaseUrl: uploadBaseUrl,
       allowAnonymous: allowAnonymous,
