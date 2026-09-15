@@ -37,8 +37,8 @@ uses in its Vue components, vs. what the stub answers today.
 | **Room create / config** | XEP-0045 `muc#owner` + XEP-0004 forms | ✅ | **B2** |
 | MUC self-ping / request voice | `muc#request` | 🟡 forwarded | **B2** |
 | **Message moderation** | XEP-0425 `message-moderate:0` | ✅ | **C1** |
-| Stanza-id stamping | XEP-0359 `sid:0` | 🟡 in MAM only | **C2** |
-| Message hints | XEP-0334 `hints` | 🟡 partial | **C2** |
+| Stanza-id stamping | XEP-0359 `sid:0` | ✅ | **C2** |
+| Message hints | XEP-0334 `hints` | ✅ | **C2** |
 | Styling passthrough | XEP-0393 | ✅ (opaque body) | — |
 | HTTP autodiscovery | XEP-0156 host-meta.json | ⬜ | **C3** (opt) |
 
@@ -244,7 +244,15 @@ uses in its Vue components, vs. what the stub answers today.
   `<forbidden>`. `test/xmpp_moderation_test.dart` green.
 - **Depends on:** B2 (owner/affiliation model).
 
-### C2 · XEP-0359 stanza-id + XEP-0334 hints (S) — 🟡
+### C2 · XEP-0359 stanza-id + XEP-0334 hints (S) — ✅
+
+- **Landed** on `feat/xmpp-web-parity`: live 1:1 and MUC messages are
+  stamped with `<stanza-id xmlns=sid:0 id by>` (by = recipient bare for
+  1:1, room JID for MUC) via `_rewriteFromStamped`; MAM inner messages
+  carry the same. `urn:xmpp:sid:0` advertised in disco. `<no-store>`
+  (`urn:xmpp:hints`) messages are delivered live but skipped by the 1:1
+  and MUC archives. Tests: `test/xmpp_stanza_id_test.dart` (4 cases,
+  green).
 
 - **What:** Stamp every routed `message` with a `<stanza-id>` (not just
   MAM results) and advertise `urn:xmpp:sid:0`; honor `<no-store>` /
