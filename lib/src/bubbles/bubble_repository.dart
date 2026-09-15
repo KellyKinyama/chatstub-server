@@ -124,6 +124,42 @@ class BubbleRepository {
     return findById(id)!;
   }
 
+  /// Creates a room with a caller-supplied [id] (the MUC local part) and
+  /// the creator as owner. Used for XEP-0045 room creation via presence.
+  Bubble createWithId({
+    required String id,
+    required String ownerId,
+    required String name,
+    String? topic,
+    String visibility = 'public',
+  }) {
+    final now = DateTime.now().toUtc();
+    _db.db.execute(
+      '''
+      INSERT INTO bubbles
+        (id, name, topic, owner_id, visibility, archived, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+      ''',
+      [
+        id,
+        name,
+        topic,
+        ownerId,
+        visibility,
+        now.toIso8601String(),
+        now.toIso8601String(),
+      ],
+    );
+    _db.db.execute(
+      '''
+      INSERT INTO bubble_members (bubble_id, user_id, role, status, joined_at)
+      VALUES (?, ?, 'owner', 'accepted', ?)
+      ''',
+      [id, ownerId, now.toIso8601String()],
+    );
+    return findById(id)!;
+  }
+
   Bubble update(
     String id, {
     String? name,

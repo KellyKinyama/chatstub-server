@@ -46,6 +46,7 @@ class Ns {
   static const messageRetract = 'urn:xmpp:message-retract:1';
   static const muc = 'http://jabber.org/protocol/muc';
   static const mucUser = 'http://jabber.org/protocol/muc#user';
+  static const mucOwner = 'http://jabber.org/protocol/muc#owner';
   static const sm3 = 'urn:xmpp:sm:3';
   static const carbons2 = 'urn:xmpp:carbons:2';
   static const rsm = 'http://jabber.org/protocol/rsm';
@@ -688,6 +689,12 @@ class XmppWsSession implements XmppSession {
       _handlePrivateStorage(id, type!, privateEl);
       return;
     }
+    // XEP-0045 muc#owner room configuration.
+    final mucOwnerEl = el.getElement('query', namespace: Ns.mucOwner);
+    if (mucOwnerEl != null && (type == 'get' || type == 'set')) {
+      _handleMucOwner(id, type!, el.getAttribute('to'), mucOwnerEl);
+      return;
+    }
     // XEP-0363 HTTP Upload slot request.
     final uploadReq = el.getElement('request', namespace: Ns.httpUpload);
     if (uploadReq != null && type == 'get') {
@@ -809,6 +816,7 @@ class XmppWsSession implements XmppSession {
       Ns.discoInfo,
       Ns.discoItems,
       Ns.muc,
+      Ns.mucOwner,
       Ns.sm3,
       Ns.carbons2,
       Ns.rsm,
@@ -1570,20 +1578,51 @@ class XmppWsSession implements XmppSession {
 
   void _handleMucPresence(XmlElement el, Jid to, String? type) {
     final bubbleId = to.local;
-    final bubble = bubbles.findById(bubbleId);
-    if (bubble == null) return;
-    final me = bubbles.memberOf(bubbleId, _userId);
-    if (me == null) return;
+    var bubble = bubbles.findById(bubbleId);
 
     if (type == 'unavailable') {
-      // Best-effort: forward to occupants; membership stays intact.
-      final leaveStanza =
-          '<presence type="unavailable" from="${_esc(to.toString())}" '
-          'to="${_esc(_jid.toString())}"/>';
-      send(leaveStanza);
+      // Best-effort leave: forward self-unavailable; membership stays intact.
+      send(
+        '<presence type="unavailable" from="${_esc(to.toString())}" '
+        'to="${_esc(_jid.toString())}"/>',
+      );
       return;
     }
-    // Deliver occupant list back to the joiner.
+
+    // XEP-0045 room creation: joining a non-existent room makes the joiner
+    // its owner. Guests cannot create rooms.
+    var created = false;
+    if (bubble == null) {
+      if (_isAnonymous) {
+        _sendMucPresenceError(to, 'cancel', 'item-not-found');
+        return;
+      }
+      bubble = bubbles.createWithId(
+        id: bubbleId,
+        ownerId: _userId,
+        name: bubbleId,
+      );
+      created = true;
+    }
+
+    var me = bubbles.memberOf(bubbleId, _userId);
+    if (me == null) {
+      // Open join: a registered non-member may join a public room and is
+      // enrolled as an accepted member. Members-only rooms and guests
+      // (no user row to reference) are refused.
+      if (bubble.visibility != 'public' || _isAnonymous) {
+        _sendMucPresenceError(to, 'auth', 'registration-required');
+        return;
+      }
+      me = bubbles.addMember(
+        bubbleId,
+        _userId,
+        role: 'user',
+        status: 'accepted',
+      );
+    }
+
+    // Deliver the occupant list to the joiner.
     for (final m in bubbles.membersOf(bubbleId)) {
       if (m.status != 'accepted') continue;
       final occJid = '${bubble.id}@${Ns.mucPrefix}$domain/${m.userId}';
@@ -1595,16 +1634,145 @@ class XmppWsSession implements XmppSession {
         '</x></presence>',
       );
     }
-    // Confirm the self-join.
+    // Confirm the self-join (110), flagging a freshly created room (201).
+    final selfOccJid = '${bubble.id}@${Ns.mucPrefix}$domain/$_userId';
     send(
-      '<presence from="${_esc('${bubble.id}@${Ns.mucPrefix}$domain/$_userId')}" '
-      'to="${_esc(_jid.toString())}">'
+      '<presence from="${_esc(selfOccJid)}" to="${_esc(_jid.toString())}">'
       '<x xmlns="${Ns.mucUser}">'
       '<item affiliation="${_esc(me.role == 'owner' ? 'owner' : 'member')}" '
       'role="participant" jid="${_esc(_jid.toString())}"/>'
       '<status code="110"/>'
+      '${created ? '<status code="201"/>' : ''}'
       '</x></presence>',
     );
+    // Announce the new occupant to the other accepted members.
+    final joinBroadcast =
+        '<presence xmlns="${Ns.client}" from="${_esc(selfOccJid)}">'
+        '<x xmlns="${Ns.mucUser}">'
+        '<item affiliation="${_esc(me.role == 'owner' ? 'owner' : 'member')}" '
+        'role="participant" jid="${_esc(_jid.toString())}"/>'
+        '</x></presence>';
+    for (final m in bubbles.membersOf(bubbleId)) {
+      if (m.status != 'accepted' || m.userId == _userId) continue;
+      router.fanOut(m.userId, joinBroadcast);
+    }
+
+    // XEP-0045 §7.2.14: deliver the current room subject to the joiner.
+    final subject = bubble.topic;
+    if (subject != null && subject.isNotEmpty) {
+      send(
+        '<message type="groupchat" '
+        'from="${_esc('${bubble.id}@${Ns.mucPrefix}$domain/${bubble.ownerId}')}" '
+        'to="${_esc(_jid.toString())}">'
+        '<subject>${_esc(subject)}</subject></message>',
+      );
+    }
+  }
+
+  void _sendMucPresenceError(Jid to, String errType, String condition) {
+    send(
+      '<presence type="error" from="${_esc(to.toString())}" '
+      'to="${_esc(_jid.toString())}">'
+      '<error type="${_esc(errType)}">'
+      '<$condition xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+      '</error></presence>',
+    );
+  }
+
+  /// XEP-0045 muc#owner. `get` returns the config form; `set` applies it
+  /// (owner only). Room name ↔ bubble name, room description ↔ topic
+  /// (also used as the delivered subject), members-only ↔ visibility.
+  void _handleMucOwner(String id, String type, String? toAttr, XmlElement q) {
+    if (toAttr == null) {
+      send(
+        '<iq type="error" id="${_esc(id)}"><error type="modify">'
+        '<bad-request xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+    final roomJid = Jid.parse(toAttr);
+    final bubble = bubbles.findById(roomJid.local);
+    if (bubble == null) {
+      send(
+        '<iq type="error" id="${_esc(id)}" from="${_esc(toAttr)}">'
+        '<error type="cancel">'
+        '<item-not-found xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+    final me = bubbles.memberOf(bubble.id, _userId);
+    if (bubble.ownerId != _userId && me?.role != 'owner') {
+      send(
+        '<iq type="error" id="${_esc(id)}" from="${_esc(toAttr)}">'
+        '<error type="auth">'
+        '<forbidden xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+        '</error></iq>',
+      );
+      return;
+    }
+
+    if (type == 'get') {
+      final membersOnly = bubble.visibility != 'public';
+      send(
+        '<iq type="result" id="${_esc(id)}" from="${_esc(toAttr)}" '
+        'to="${_esc(_jid.toString())}">'
+        '<query xmlns="${Ns.mucOwner}">'
+        '<x xmlns="${Ns.dataForm}" type="form">'
+        '<title>Configuration for ${_esc(bubble.name)}</title>'
+        '<field var="FORM_TYPE" type="hidden">'
+        '<value>http://jabber.org/protocol/muc#roomconfig</value></field>'
+        '<field var="muc#roomconfig_roomname" type="text-single" '
+        'label="Room name"><value>${_esc(bubble.name)}</value></field>'
+        '<field var="muc#roomconfig_roomdesc" type="text-single" '
+        'label="Description">'
+        '<value>${_esc(bubble.topic ?? '')}</value></field>'
+        '<field var="muc#roomconfig_membersonly" type="boolean" '
+        'label="Members only"><value>${membersOnly ? '1' : '0'}</value></field>'
+        '<field var="muc#roomconfig_persistentroom" type="boolean" '
+        'label="Persistent"><value>1</value></field>'
+        '</x></query></iq>',
+      );
+      return;
+    }
+
+    // set — apply the submitted form.
+    final form = q.getElement('x', namespace: Ns.dataForm);
+    final fields = <String, String>{};
+    if (form != null) {
+      for (final f in form.findElements('field')) {
+        final v = f.getAttribute('var');
+        if (v == null) continue;
+        fields[v] = f.getElement('value')?.innerText.trim() ?? '';
+      }
+    }
+    final newName = fields['muc#roomconfig_roomname'];
+    final newDesc = fields['muc#roomconfig_roomdesc'];
+    final membersOnly = fields['muc#roomconfig_membersonly'];
+    final visibility = membersOnly == null
+        ? null
+        : (membersOnly == '1' || membersOnly == 'true' ? 'private' : 'public');
+    final updated = bubbles.update(
+      bubble.id,
+      name: (newName != null && newName.isNotEmpty) ? newName : null,
+      topic: newDesc,
+      visibility: visibility,
+    );
+    send('<iq type="result" id="${_esc(id)}" from="${_esc(toAttr)}"/>');
+
+    // Broadcast the (possibly changed) subject to occupants.
+    final subject = updated.topic;
+    if (subject != null && subject.isNotEmpty) {
+      final subjStanza =
+          '<message xmlns="${Ns.client}" type="groupchat" '
+          'from="${_esc('${updated.id}@${Ns.mucPrefix}$domain/$_userId')}">'
+          '<subject>${_esc(subject)}</subject></message>';
+      for (final m in bubbles.membersOf(updated.id)) {
+        if (m.status != 'accepted') continue;
+        router.fanOut(m.userId, subjStanza);
+      }
+    }
   }
 
   void _sendRosterPresencesTo(XmppSession target) {
