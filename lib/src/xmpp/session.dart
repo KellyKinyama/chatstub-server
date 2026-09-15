@@ -44,6 +44,9 @@ class Ns {
   static const chatMarkers = 'urn:xmpp:chat-markers:0';
   static const reactions = 'urn:xmpp:reactions:0';
   static const messageRetract = 'urn:xmpp:message-retract:1';
+  static const fasten = 'urn:xmpp:fasten:0';
+  static const moderate0 = 'urn:xmpp:message-moderate:0';
+  static const retract0 = 'urn:xmpp:message-retract:0';
   static const muc = 'http://jabber.org/protocol/muc';
   static const mucUser = 'http://jabber.org/protocol/muc#user';
   static const mucOwner = 'http://jabber.org/protocol/muc#owner';
@@ -695,6 +698,15 @@ class XmppWsSession implements XmppSession {
       _handleMucOwner(id, type!, el.getAttribute('to'), mucOwnerEl);
       return;
     }
+    // XEP-0425 message moderation (moderator retracts a MUC message).
+    final applyToEl = el.getElement('apply-to', namespace: Ns.fasten);
+    if (applyToEl != null && type == 'set') {
+      final moderateEl = applyToEl.getElement('moderate', namespace: Ns.moderate0);
+      if (moderateEl != null) {
+        _handleModeration(id, el.getAttribute('to'), applyToEl, moderateEl);
+        return;
+      }
+    }
     // XEP-0363 HTTP Upload slot request.
     final uploadReq = el.getElement('request', namespace: Ns.httpUpload);
     if (uploadReq != null && type == 'get') {
@@ -822,6 +834,7 @@ class XmppWsSession implements XmppSession {
       Ns.rsm,
       Ns.jingle,
       Ns.vcard,
+      Ns.moderate0,
       if (upload.maxFileSize > 0) Ns.httpUpload,
     ];
     final buf = StringBuffer(
@@ -1173,18 +1186,30 @@ class XmppWsSession implements XmppSession {
 
   String _wrapBubbleForMam(String queryId, BubbleMessage m) {
     final roomJid = '${m.bubbleId}@${Ns.mucPrefix}$domain';
-    final threadXml = m.thread != null
-        ? '<thread>${_esc(m.thread!)}</thread>'
-        : '';
-    final subjectXml = m.subject != null
-        ? '<subject>${_esc(m.subject!)}</subject>'
-        : '';
-    final inner =
-        '<message xmlns="${Ns.client}" from="${_esc('$roomJid/${m.from.local}')}" '
-        'to="${_esc(roomJid)}" type="groupchat" id="${_esc(m.stanzaId)}">'
-        '<body>${_esc(m.body)}</body>'
-        '$threadXml$subjectXml'
-        '</message>';
+    final moderation = bubbles.moderationFor(m.bubbleId, m.stanzaId);
+    final String inner;
+    if (moderation != null) {
+      // XEP-0425: moderated messages surface as a tombstone in MAM.
+      inner = _moderationTombstone(
+        roomJid: roomJid,
+        targetId: m.stanzaId,
+        byJid: moderation.byJid,
+        reason: moderation.reason,
+      );
+    } else {
+      final threadXml = m.thread != null
+          ? '<thread>${_esc(m.thread!)}</thread>'
+          : '';
+      final subjectXml = m.subject != null
+          ? '<subject>${_esc(m.subject!)}</subject>'
+          : '';
+      inner =
+          '<message xmlns="${Ns.client}" from="${_esc('$roomJid/${m.from.local}')}" '
+          'to="${_esc(roomJid)}" type="groupchat" id="${_esc(m.stanzaId)}">'
+          '<body>${_esc(m.body)}</body>'
+          '$threadXml$subjectXml'
+          '</message>';
+    }
     return '<message to="${_esc(_jid.toString())}">'
         '<result xmlns="${Ns.mam2}" queryid="${_esc(queryId)}" id="${_esc(m.id)}">'
         '<forwarded xmlns="${Ns.forward}">'
@@ -1429,6 +1454,97 @@ class XmppWsSession implements XmppSession {
     for (final memberId in bubbles.memberIdsOf(bubbleId)) {
       router.fanOut(memberId, stanza);
     }
+  }
+
+  /// XEP-0425 moderation. A room owner/moderator retracts another member's
+  /// MUC message; the archived body is redacted and a `<moderated>`
+  /// tombstone is fanned out to occupants (and served by later MAM).
+  void _handleModeration(
+    String id,
+    String? toAttr,
+    XmlElement applyTo,
+    XmlElement moderate,
+  ) {
+    if (toAttr == null) {
+      _sendIqError(id, 'modify', 'bad-request');
+      return;
+    }
+    final room = Jid.parse(toAttr);
+    final bubbleId = room.local;
+    final bubble = bubbles.findById(bubbleId);
+    if (bubble == null) {
+      _sendIqError(id, 'cancel', 'item-not-found', from: toAttr);
+      return;
+    }
+    final me = bubbles.memberOf(bubbleId, _userId);
+    if (bubble.ownerId != _userId && me?.role != 'owner') {
+      _sendIqError(id, 'auth', 'forbidden', from: toAttr);
+      return;
+    }
+    final targetId = applyTo.getAttribute('id');
+    if (targetId == null || targetId.isEmpty) {
+      _sendIqError(id, 'modify', 'bad-request', from: toAttr);
+      return;
+    }
+    final target = bubbles.findMessageByStanzaId(bubbleId, targetId);
+    if (target == null) {
+      _sendIqError(id, 'cancel', 'item-not-found', from: toAttr);
+      return;
+    }
+    final reason = moderate.getElement('reason')?.innerText.trim();
+    final byJid = _jid.bare.toString();
+    bubbles.moderateMessage(
+      bubbleId,
+      targetId,
+      byJid: byJid,
+      reason: (reason != null && reason.isNotEmpty) ? reason : null,
+    );
+    send('<iq type="result" id="${_esc(id)}" from="${_esc(toAttr)}"/>');
+
+    final tombstone = _moderationTombstone(
+      roomJid: room.toString(),
+      targetId: targetId,
+      byJid: byJid,
+      reason: (reason != null && reason.isNotEmpty) ? reason : null,
+    );
+    for (final memberId in bubbles.memberIdsOf(bubbleId)) {
+      router.fanOut(memberId, tombstone);
+    }
+  }
+
+  /// Builds an XEP-0425 `<moderated>` tombstone message (read by xmpp-web
+  /// via the `urn:xmpp:fasten:0` / `message-moderate:0` filters).
+  String _moderationTombstone({
+    required String roomJid,
+    required String targetId,
+    required String byJid,
+    String? reason,
+    bool includeClientNs = true,
+  }) {
+    final reasonXml = reason != null ? '<reason>${_esc(reason)}</reason>' : '';
+    final ns = includeClientNs ? ' xmlns="${Ns.client}"' : '';
+    return '<message$ns type="groupchat" from="${_esc(roomJid)}" '
+        'id="${_esc(DateTime.now().microsecondsSinceEpoch.toRadixString(16))}">'
+        '<apply-to xmlns="${Ns.fasten}" id="${_esc(targetId)}">'
+        '<moderated xmlns="${Ns.moderate0}" by="${_esc(byJid)}">'
+        '<retract xmlns="${Ns.retract0}"/>'
+        '$reasonXml'
+        '</moderated></apply-to></message>';
+  }
+
+  void _sendIqError(
+    String id,
+    String errType,
+    String condition, {
+    String? from,
+  }) {
+    final fromAttr = from != null ? ' from="${_esc(from)}"' : '';
+    send(
+      '<iq type="error" id="${_esc(id)}"$fromAttr>'
+      '<error type="${_esc(errType)}">'
+      '<$condition xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+      '</error></iq>',
+    );
   }
 
   String _wrapSentCarbon(String innerMessageStanza) {

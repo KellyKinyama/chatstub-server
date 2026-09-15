@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS private_storage (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- XEP-0425 message moderation. One row per moderated MUC message; the
+-- archived body is redacted and MAM emits a tombstone for these.
+CREATE TABLE IF NOT EXISTS moderations (
+  bubble_id    TEXT NOT NULL,
+  stanza_id    TEXT NOT NULL,
+  by_jid       TEXT NOT NULL,
+  reason       TEXT,
+  moderated_at TEXT NOT NULL,
+  PRIMARY KEY (bubble_id, stanza_id),
+  FOREIGN KEY (bubble_id) REFERENCES bubbles(id) ON DELETE CASCADE
+);
+
 -- Phase 2: presence. One row per user; XMPP (phase 3) will drive live updates.
 CREATE TABLE IF NOT EXISTS presence (
   user_id      TEXT PRIMARY KEY,

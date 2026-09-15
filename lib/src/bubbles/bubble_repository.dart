@@ -68,6 +68,13 @@ class BubbleMessage {
   final String? subject;
 }
 
+/// XEP-0425 moderation record for a MUC message.
+class Moderation {
+  Moderation({required this.byJid, this.reason});
+  final String byJid;
+  final String? reason;
+}
+
 class BubbleRepository {
   BubbleRepository(this._db, this._ids);
 
@@ -371,6 +378,51 @@ class BubbleRepository {
       [bubbleId, stanzaId],
     );
     return _db.db.updatedRows > 0;
+  }
+
+  /// XEP-0425 moderation: record a tombstone and redact the archived body
+  /// so MAM no longer serves the original content.
+  void moderateMessage(
+    String bubbleId,
+    String stanzaId, {
+    required String byJid,
+    String? reason,
+  }) {
+    _db.db.execute(
+      '''
+      INSERT INTO moderations (bubble_id, stanza_id, by_jid, reason, moderated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(bubble_id, stanza_id) DO UPDATE SET
+        by_jid = excluded.by_jid,
+        reason = excluded.reason,
+        moderated_at = excluded.moderated_at
+      ''',
+      [
+        bubbleId,
+        stanzaId,
+        byJid,
+        reason,
+        DateTime.now().toUtc().toIso8601String(),
+      ],
+    );
+    _db.db.execute(
+      "UPDATE bubble_messages SET body = '' "
+      'WHERE bubble_id = ? AND stanza_id = ?',
+      [bubbleId, stanzaId],
+    );
+  }
+
+  Moderation? moderationFor(String bubbleId, String stanzaId) {
+    final rs = _db.db.select(
+      'SELECT by_jid, reason FROM moderations '
+      'WHERE bubble_id = ? AND stanza_id = ?',
+      [bubbleId, stanzaId],
+    );
+    if (rs.isEmpty) return null;
+    return Moderation(
+      byJid: rs.first['by_jid'] as String,
+      reason: rs.first['reason'] as String?,
+    );
   }
 
   /// XEP-0313 + RSM-aware slice for bubble history. No anchor or
