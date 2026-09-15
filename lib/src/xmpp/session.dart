@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:logging/logging.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -144,6 +145,8 @@ class XmppWsSession implements XmppSession {
     required this.router,
     required this.smRegistry,
     required this.pushTokens,
+    this.allowAnonymous = false,
+    this.anonymousHost,
     this.sipGateway,
     this.limits = const XmppLimits(),
   }) : _channel = channel;
@@ -160,6 +163,8 @@ class XmppWsSession implements XmppSession {
   final StanzaRouter router;
   final SmRegistry smRegistry;
   final PushTokenRepository pushTokens;
+  final bool allowAnonymous;
+  final String? anonymousHost;
   final SipGateway? sipGateway;
   final XmppLimits limits;
 
@@ -168,6 +173,9 @@ class XmppWsSession implements XmppSession {
   Jid _jid = const Jid(local: '', domain: '');
   String _userId = '';
   int _saslFailures = 0;
+
+  // SASL ANONYMOUS (RFC 4505) guest session — no backing user row.
+  bool _isAnonymous = false;
 
   // XEP-0198 stream management
   bool _smEnabled = false;
@@ -255,7 +263,7 @@ class XmppWsSession implements XmppSession {
     _stopKeepalive();
     router.unregister(this);
     if (_jid.local.isNotEmpty) {
-      presence.set(_userId, 'offline');
+      _persistPresence('offline');
       _fanOutPresenceAvailability(unavailable: true);
     }
     try {
@@ -268,7 +276,7 @@ class XmppWsSession implements XmppSession {
     _state = _State.closed;
     router.unregister(this);
     if (_jid.local.isNotEmpty) {
-      presence.set(_userId, 'offline');
+      _persistPresence('offline');
       _fanOutPresenceAvailability(unavailable: true);
     }
     try {
@@ -495,9 +503,11 @@ class XmppWsSession implements XmppSession {
       'id="${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}"/>',
     );
     if (_state == _State.streamOpened) {
+      final mechs = StringBuffer('<mechanism>PLAIN</mechanism>');
+      if (allowAnonymous) mechs.write('<mechanism>ANONYMOUS</mechanism>');
       send(
         '<stream:features xmlns:stream="${Ns.streams}">'
-        '<mechanisms xmlns="${Ns.sasl}"><mechanism>PLAIN</mechanism></mechanisms>'
+        '<mechanisms xmlns="${Ns.sasl}">$mechs</mechanisms>'
         '</stream:features>',
       );
     } else if (_state == _State.authenticated) {
@@ -517,7 +527,12 @@ class XmppWsSession implements XmppSession {
   }
 
   void _handleAuth(XmlElement el) {
-    if (el.getAttribute('mechanism') != 'PLAIN') {
+    final mechanism = el.getAttribute('mechanism');
+    if (mechanism == 'ANONYMOUS') {
+      _handleAnonymousAuth();
+      return;
+    }
+    if (mechanism != 'PLAIN') {
       _saslFailure('<invalid-mechanism/>');
       return;
     }
@@ -548,6 +563,36 @@ class XmppWsSession implements XmppSession {
     _state = _State.authenticated;
     _saslFailures = 0;
     send('<success xmlns="${Ns.sasl}"/>');
+  }
+
+  /// SASL ANONYMOUS (RFC 4505): mint an ephemeral guest identity on the
+  /// configured anon host (or the server domain when unset). No user row
+  /// exists, so presence is never persisted for these sessions.
+  void _handleAnonymousAuth() {
+    if (!allowAnonymous) {
+      _saslFailure('<invalid-mechanism/>');
+      return;
+    }
+    _isAnonymous = true;
+    _userId = _newGuestLocal();
+    _jid = Jid(local: _userId, domain: anonymousHost ?? domain);
+    _state = _State.authenticated;
+    _saslFailures = 0;
+    send('<success xmlns="${Ns.sasl}"/>');
+  }
+
+  static String _newGuestLocal() {
+    final r = Random.secure();
+    final bytes = List<int>.generate(8, (_) => r.nextInt(256));
+    return 'guest-'
+        '${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  /// Guests (SASL ANONYMOUS) have no user row, so presence must not be
+  /// persisted — the presence table has a FK to users(id).
+  void _persistPresence(String show, {String? status}) {
+    if (_isAnonymous) return;
+    presence.set(_userId, show, status: status);
   }
 
   void _saslFailure(String reasonElement) {
@@ -582,7 +627,11 @@ class XmppWsSession implements XmppSession {
       }
       final res = bindEl.getElement('resource')?.innerText.trim();
       if (res != null && res.isNotEmpty) _resource = res;
-      _jid = Jid(local: _userId, domain: domain, resource: _resource);
+      _jid = Jid(
+        local: _userId,
+        domain: _isAnonymous ? (anonymousHost ?? domain) : domain,
+        resource: _resource,
+      );
       _state = _State.bound;
       router.register(this);
       send(
@@ -1246,13 +1295,13 @@ class XmppWsSession implements XmppSession {
     }
 
     if (typeAttr == 'unavailable') {
-      presence.set(_userId, 'offline');
+      _persistPresence('offline');
       _fanOutPresenceAvailability(unavailable: true);
       return;
     }
     final show = el.getElement('show')?.innerText.trim() ?? 'online';
     final status = el.getElement('status')?.innerText;
-    presence.set(_userId, show, status: status);
+    _persistPresence(show, status: status);
     _fanOutPresenceAvailability(show: show, status: status);
 
     // Initial <presence/> from client — deliver each roster contact's known

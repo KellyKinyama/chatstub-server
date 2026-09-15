@@ -37,3 +37,8 @@ logs:
 metrics:
   enabled: true
   path: /metrics
+
+anonymous:
+  # SASL ANONYMOUS (RFC 4505) guest access for xmpp-web's /guest flow.
+  enabled: false
+  host: null

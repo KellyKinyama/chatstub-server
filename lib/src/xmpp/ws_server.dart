@@ -28,6 +28,8 @@ Handler xmppWebSocketHandler({
   required StanzaRouter router,
   required SmRegistry smRegistry,
   required PushTokenRepository pushTokens,
+  bool allowAnonymous = false,
+  String? anonymousHost,
   SipGateway? sipGateway,
 }) {
   return webSocketHandler((channel, protocol) async {
@@ -45,6 +47,8 @@ Handler xmppWebSocketHandler({
       router: router,
       smRegistry: smRegistry,
       pushTokens: pushTokens,
+      allowAnonymous: allowAnonymous,
+      anonymousHost: anonymousHost,
       sipGateway: sipGateway,
     );
     await session.run();

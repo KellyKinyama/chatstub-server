@@ -66,6 +66,15 @@ class MetricsConfig {
   final String path;
 }
 
+/// SASL ANONYMOUS (RFC 4505) guest access. When [enabled], the XMPP
+/// stream advertises the ANONYMOUS mechanism and mints an ephemeral JID
+/// on [host] (falls back to the server domain when null).
+class AnonymousConfig {
+  const AnonymousConfig({this.enabled = false, this.host});
+  final bool enabled;
+  final String? host;
+}
+
 class Config {
   Config({
     required this.host,
@@ -81,6 +90,7 @@ class Config {
     this.tls = const TlsConfig(),
     this.logs = const LogsConfig(),
     this.metrics = const MetricsConfig(),
+    this.anonymous = const AnonymousConfig(),
     this.sip = SipConfig.disabled,
   });
 
@@ -97,6 +107,7 @@ class Config {
   final TlsConfig tls;
   final LogsConfig logs;
   final MetricsConfig metrics;
+  final AnonymousConfig anonymous;
   final SipConfig sip;
 
   /// XMPP domain the server presents to clients.
@@ -113,6 +124,7 @@ class Config {
     final tlsMap = raw['tls'] as YamlMap?;
     final logsMap = raw['logs'] as YamlMap?;
     final metricsMap = raw['metrics'] as YamlMap?;
+    final anonMap = raw['anonymous'] as YamlMap?;
     final sipMap = raw['sip'] as YamlMap?;
     return Config(
       host: raw['host'] as String,
@@ -153,6 +165,12 @@ class Config {
           : MetricsConfig(
               enabled: metricsMap['enabled'] as bool? ?? true,
               path: metricsMap['path'] as String? ?? '/metrics',
+            ),
+      anonymous: anonMap == null
+          ? const AnonymousConfig()
+          : AnonymousConfig(
+              enabled: anonMap['enabled'] as bool? ?? false,
+              host: anonMap['host'] as String?,
             ),
       sip: sipMap == null ? SipConfig.disabled : _parseSip(sipMap),
     );
