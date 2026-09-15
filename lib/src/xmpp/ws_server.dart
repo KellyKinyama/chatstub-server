@@ -8,9 +8,11 @@ import '../messages/message_repository.dart';
 import '../messages/reaction_repository.dart';
 import '../push/push_token_repository.dart';
 import '../sip/sip_gateway.dart';
+import '../users/avatar_store.dart';
 import '../users/presence_repository.dart';
 import '../users/roster_repository.dart';
 import '../users/user_repository.dart';
+import '../users/vcard_repository.dart';
 import 'router.dart';
 import 'session.dart';
 
@@ -28,6 +30,8 @@ Handler xmppWebSocketHandler({
   required StanzaRouter router,
   required SmRegistry smRegistry,
   required PushTokenRepository pushTokens,
+  required AvatarStore avatars,
+  required VcardRepository vcards,
   bool allowAnonymous = false,
   String? anonymousHost,
   SipGateway? sipGateway,
@@ -47,6 +51,8 @@ Handler xmppWebSocketHandler({
       router: router,
       smRegistry: smRegistry,
       pushTokens: pushTokens,
+      avatars: avatars,
+      vcards: vcards,
       allowAnonymous: allowAnonymous,
       anonymousHost: anonymousHost,
       sipGateway: sipGateway,

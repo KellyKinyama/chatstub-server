@@ -56,8 +56,34 @@ class AvatarStore {
     );
   }
 
+  /// Synchronous variant used by the sync XMPP IQ dispatch (vCard PHOTO).
+  AvatarBlob? readSync(String userId) {
+    final rs = _db.db.select(
+      'SELECT mime_type, updated_at FROM avatars WHERE user_id = ?',
+      [userId],
+    );
+    if (rs.isEmpty) return null;
+    final f = File(_path(userId));
+    if (!f.existsSync()) return null;
+    return AvatarBlob(
+      bytes: f.readAsBytesSync(),
+      mimeType: rs.first['mime_type'] as String,
+      updatedAt: DateTime.parse(rs.first['updated_at'] as String),
+    );
+  }
+
   Future<void> write(String userId, Uint8List bytes, String mimeType) async {
     await File(_path(userId)).writeAsBytes(bytes, flush: true);
+    _writeMeta(userId, bytes.length, mimeType);
+  }
+
+  /// Synchronous variant used by the sync XMPP IQ dispatch (vCard PHOTO set).
+  void writeSync(String userId, Uint8List bytes, String mimeType) {
+    File(_path(userId)).writeAsBytesSync(bytes, flush: true);
+    _writeMeta(userId, bytes.length, mimeType);
+  }
+
+  void _writeMeta(String userId, int byteSize, String mimeType) {
     _db.db.execute(
       '''
       INSERT INTO avatars (user_id, mime_type, byte_size, updated_at)
@@ -70,7 +96,7 @@ class AvatarStore {
       [
         userId,
         mimeType,
-        bytes.length,
+        byteSize,
         DateTime.now().toUtc().toIso8601String(),
       ],
     );

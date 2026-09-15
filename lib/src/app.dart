@@ -27,6 +27,7 @@ import 'users/presence_repository.dart';
 import 'users/roster_repository.dart';
 import 'users/routes.dart';
 import 'users/user_repository.dart';
+import 'users/vcard_repository.dart';
 import 'util/errors.dart';
 import 'util/ids.dart';
 import 'xmpp/router.dart';
@@ -41,6 +42,7 @@ class RainbowStubApp {
     required this.roster,
     required this.presence,
     required this.avatars,
+    required this.vcards,
     required this.messages,
     required this.reactions,
     required this.bubbles,
@@ -62,6 +64,7 @@ class RainbowStubApp {
   final RosterRepository roster;
   final PresenceRepository presence;
   final AvatarStore avatars;
+  final VcardRepository vcards;
   final MessageRepository messages;
   final ReactionRepository reactions;
   final BubbleRepository bubbles;
@@ -86,6 +89,7 @@ class RainbowStubApp {
     final roster = RosterRepository(db, users);
     final presence = PresenceRepository(db);
     final avatars = AvatarStore(rootDir: config.avatarStorePath, db: db);
+    final vcards = VcardRepository(db);
     final messages = MessageRepository(db, ids);
     final reactions = ReactionRepository(db);
     final bubbles = BubbleRepository(db, ids);
@@ -125,6 +129,7 @@ class RainbowStubApp {
       roster: roster,
       presence: presence,
       avatars: avatars,
+      vcards: vcards,
       messages: messages,
       reactions: reactions,
       bubbles: bubbles,
@@ -154,6 +159,8 @@ class RainbowStubApp {
       router: xmppRouter,
       smRegistry: smRegistry,
       pushTokens: pushTokens,
+      avatars: avatars,
+      vcards: vcards,
       allowAnonymous: config.anonymous.enabled,
       anonymousHost: config.anonymous.host,
       sipGateway: sipGateway,

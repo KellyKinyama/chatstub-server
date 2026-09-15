@@ -12,9 +12,11 @@ import '../messages/message_repository.dart';
 import '../messages/reaction_repository.dart';
 import '../push/push_token_repository.dart';
 import '../sip/sip_gateway.dart';
+import '../users/avatar_store.dart';
 import '../users/presence_repository.dart';
 import '../users/roster_repository.dart';
 import '../users/user_repository.dart';
+import '../users/vcard_repository.dart';
 import 'jid.dart';
 import 'router.dart';
 
@@ -48,6 +50,7 @@ class Ns {
   static const jingle = 'urn:xmpp:jingle:1';
   static const mucCall = 'urn:rainbow:muc-call:1';
   static const lastActivity = 'jabber:iq:last';
+  static const vcard = 'vcard-temp';
 }
 
 /// Server-wide registry of resumable Stream Management sessions.
@@ -145,6 +148,8 @@ class XmppWsSession implements XmppSession {
     required this.router,
     required this.smRegistry,
     required this.pushTokens,
+    required this.avatars,
+    required this.vcards,
     this.allowAnonymous = false,
     this.anonymousHost,
     this.sipGateway,
@@ -163,6 +168,8 @@ class XmppWsSession implements XmppSession {
   final StanzaRouter router;
   final SmRegistry smRegistry;
   final PushTokenRepository pushTokens;
+  final AvatarStore avatars;
+  final VcardRepository vcards;
   final bool allowAnonymous;
   final String? anonymousHost;
   final SipGateway? sipGateway;
@@ -658,6 +665,12 @@ class XmppWsSession implements XmppSession {
       _replyRosterGet(id);
       return;
     }
+    // XEP-0054 vcard-temp get/set.
+    final vcardEl = el.getElement('vCard', namespace: Ns.vcard);
+    if (vcardEl != null && (type == 'get' || type == 'set')) {
+      _handleVcard(id, type!, el.getAttribute('to'), vcardEl);
+      return;
+    }
     // XEP-0280 carbons enable / disable.
     final carbonsEnable = el.getElement('enable', namespace: Ns.carbons2);
     final carbonsDisable = el.getElement('disable', namespace: Ns.carbons2);
@@ -777,6 +790,7 @@ class XmppWsSession implements XmppSession {
       Ns.carbons2,
       Ns.rsm,
       Ns.jingle,
+      Ns.vcard,
     ];
     final buf = StringBuffer(
       '<iq type="result" id="${_esc(id)}" from="${_esc(domain)}" '
@@ -806,6 +820,84 @@ class XmppWsSession implements XmppSession {
       );
     }
     buf.write('</query></iq>');
+    send(buf.toString());
+  }
+
+  /// XEP-0054 vcard-temp. `get` returns the target user's card (self when
+  /// unaddressed); `set` persists the authenticated user's card. PHOTO is
+  /// bridged to the avatar store so REST and XMPP surfaces stay in sync.
+  void _handleVcard(String id, String type, String? toAttr, XmlElement vcard) {
+    if (type == 'set') {
+      if (_isAnonymous) {
+        send(
+          '<iq type="error" id="${_esc(id)}"><error type="auth">'
+          '<forbidden xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"/>'
+          '</error></iq>',
+        );
+        return;
+      }
+      final fn = vcard.getElement('FN')?.innerText.trim();
+      final nickname = vcard.getElement('NICKNAME')?.innerText.trim();
+      final email = vcard
+          .getElement('EMAIL')
+          ?.getElement('USERID')
+          ?.innerText
+          .trim();
+      vcards.upsert(
+        _userId,
+        fn: (fn == null || fn.isEmpty) ? null : fn,
+        nickname: (nickname == null || nickname.isEmpty) ? null : nickname,
+        email: (email == null || email.isEmpty) ? null : email,
+      );
+      final photo = vcard.getElement('PHOTO');
+      final binval = photo?.getElement('BINVAL')?.innerText;
+      final mime = photo?.getElement('TYPE')?.innerText.trim();
+      if (binval != null && binval.trim().isNotEmpty) {
+        try {
+          final bytes = base64.decode(binval.replaceAll(RegExp(r'\s'), ''));
+          avatars.writeSync(
+            _userId,
+            bytes,
+            (mime == null || mime.isEmpty) ? 'image/png' : mime,
+          );
+        } on FormatException {
+          // Ignore a malformed PHOTO — text fields are already persisted.
+        }
+      }
+      send('<iq type="result" id="${_esc(id)}"/>');
+      return;
+    }
+
+    // get
+    final targetId = (toAttr == null || toAttr.isEmpty)
+        ? _userId
+        : Jid.parse(toAttr).local;
+    final user = users.findById(targetId);
+    final stored = vcards.find(targetId);
+    final fn = stored?.fn ?? user?.displayName ?? '';
+    final nickname = stored?.nickname ?? user?.nickName;
+    final email = stored?.email ?? user?.loginEmail;
+    final photo = avatars.readSync(targetId);
+
+    final buf = StringBuffer(
+      '<iq type="result" id="${_esc(id)}" '
+      'from="${_esc('$targetId@$domain')}">'
+      '<vCard xmlns="${Ns.vcard}">',
+    );
+    if (fn.isNotEmpty) buf.write('<FN>${_esc(fn)}</FN>');
+    if (nickname != null && nickname.isNotEmpty) {
+      buf.write('<NICKNAME>${_esc(nickname)}</NICKNAME>');
+    }
+    if (email != null && email.isNotEmpty) {
+      buf.write('<EMAIL><INTERNET/><USERID>${_esc(email)}</USERID></EMAIL>');
+    }
+    if (photo != null) {
+      buf.write(
+        '<PHOTO><TYPE>${_esc(photo.mimeType)}</TYPE>'
+        '<BINVAL>${base64.encode(photo.bytes)}</BINVAL></PHOTO>',
+      );
+    }
+    buf.write('</vCard></iq>');
     send(buf.toString());
   }
 

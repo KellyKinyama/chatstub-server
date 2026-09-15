@@ -12,6 +12,7 @@ export 'src/users/user_repository.dart';
 export 'src/users/roster_repository.dart';
 export 'src/users/presence_repository.dart';
 export 'src/users/avatar_store.dart';
+export 'src/users/vcard_repository.dart';
 export 'src/users/routes.dart';
 export 'src/messages/message_repository.dart';
 export 'src/bubbles/bubble_repository.dart';

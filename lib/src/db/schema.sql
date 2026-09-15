@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS avatars (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- XEP-0054 vcard-temp text fields. PHOTO is bridged to the avatars store.
+CREATE TABLE IF NOT EXISTS vcards (
+  user_id     TEXT PRIMARY KEY,
+  fn          TEXT,
+  nickname    TEXT,
+  email       TEXT,
+  updated_at  TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Phase 2: presence. One row per user; XMPP (phase 3) will drive live updates.
 CREATE TABLE IF NOT EXISTS presence (
   user_id      TEXT PRIMARY KEY,
