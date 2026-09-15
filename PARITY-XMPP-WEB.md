@@ -30,7 +30,7 @@ uses in its Vue components, vs. what the stub answers today.
 | Reactions | XEP-0444 | ✅ | — |
 | **Registered login** | SASL PLAIN | ✅ | — |
 | **Guest / anonymous join** | SASL ANONYMOUS (RFC 4505) | ✅ | **A1** |
-| **vCard / avatar edit** | XEP-0054 `vcard-temp` | ⬜ | **A2** |
+| **vCard / avatar edit** | XEP-0054 `vcard-temp` | ✅ | **A2** |
 | **File sharing** | XEP-0363 `http:upload:0` | 🟡 REST only | **A3** |
 | OOB url in message | XEP-0066 `jabber:x:oob` | 🟡 forwarded | **A3** |
 | **Bookmarked rooms** | XEP-0048 / 0049 `storage:bookmarks` | ⬜ | **B1** |
@@ -75,7 +75,16 @@ uses in its Vue components, vs. what the stub answers today.
   `test/xmpp_anonymous_test.dart` drives it. PLAIN path unchanged.
 - **Depends on:** nothing.
 
-### A2 · XEP-0054 `vcard-temp` get/set (M) — ⬜
+### A2 · XEP-0054 `vcard-temp` get/set (M) — ✅
+
+- **Landed** on `feat/xmpp-web-parity`: `<iq><vCard xmlns="vcard-temp">`
+  get returns the target user's FN/NICKNAME/EMAIL/PHOTO (self when
+  unaddressed, synthesized from the user record when no card stored);
+  set persists the authenticated user's card. PHOTO is bridged to the
+  avatar store (`readSync`/`writeSync`) so REST and XMPP stay in sync.
+  Guests (anon) are refused a set with `<forbidden/>`. New `vcards`
+  table + `VcardRepository`; `vcard-temp` advertised in disco#info.
+  Tests: `test/xmpp_vcard_test.dart` (4 cases, green).
 
 - **What:** Answer `<iq><vCard xmlns="vcard-temp"/>` get with the
   target user's card (FN, NICKNAME, EMAIL, PHOTO), and persist a set
@@ -217,7 +226,7 @@ uses in its Vue components, vs. what the stub answers today.
 ## Suggested order
 
 1. **A1** (guest access) — ✅ done.
-2. **A2** (vCard) — unblocks Profile + avatars, no external deps.
+2. **A2** (vCard) — ✅ done.
 3. **A3** (HTTP upload) — highest-value visible feature; reuses storage.
 4. **B1** (bookmarks) — small, makes the rooms list persist.
 5. **B2** (MUC owner) — larger; prerequisite for moderation.
